@@ -18,13 +18,16 @@ typedef struct
 	int last;
 } list_t;
 
-TCHAR* get_full_path(const TCHAR* path)
+void resolve_path(const TCHAR* path, TCHAR* buffer, size_t buflen)
 {
-	static TCHAR lpBuffer[MAX_PATH * MAX_PATH] = { 0 };
-	memset(lpBuffer, 0, sizeof(TCHAR) * MAX_PATH * MAX_PATH);
-	if (GetFullPathName(path, MAX_PATH * MAX_PATH, lpBuffer, NULL) == 0)
-		_tcscpy_s(lpBuffer, path);
-	return lpBuffer;
+	if (!path || _tcschr(path, _T('%')))
+	{
+		if (path) _tcsncpy_s(buffer, buflen, path, _TRUNCATE);
+		else buffer[0] = _T('\0');
+		return;
+	}
+	if (GetFullPathName(path, (unsigned long) buflen, buffer, NULL) == 0)
+		_tcsncpy_s(buffer, buflen, path, _TRUNCATE);
 }
 
 /*
@@ -986,7 +989,9 @@ int pre_install_service(int argc, TCHAR** argv)
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("service"), _T("pre_install_service()"));
 		return 1;
 	}
-	_sntprintf_s(service->exe, _countof(service->exe), _TRUNCATE, _T("%s"), get_full_path(argv[1]));
+	TCHAR exe_path[MAX_PATH] = { 0 };
+	resolve_path(argv[1], exe_path, _countof(exe_path));
+	_sntprintf_s(service->exe, _countof(service->exe), _TRUNCATE, _T("%s"), exe_path);
 
 	/* Arguments are optional */
 	size_t flagslen = 0;
@@ -1061,6 +1066,8 @@ int pre_edit_service(int argc, TCHAR** argv)
 	const TCHAR* parameter = 0;
 	settings_t* setting = 0;
 	TCHAR* additional;
+	TCHAR additional_buf[MAX_PATH] = { 0 };
+	TCHAR argv3_buf[MAX_PATH] = { 0 };
 
 	/* Validate the parameter. */
 	if (mandatory > 2)
@@ -1108,10 +1115,12 @@ int pre_edit_service(int argc, TCHAR** argv)
 			if (argc < mandatory) return usage(1);
 		}
 	}
-	if (str_equiv(parameter, NSSM_REG_STDOUT) || str_equiv(parameter, NSSM_REG_STDERR) || str_equiv(parameter, NSSM_REG_DIR))
+	if (parameter && additional && argc > 3 && (str_equiv(parameter, NSSM_REG_STDOUT) || str_equiv(parameter, NSSM_REG_STDERR) || str_equiv(parameter, NSSM_REG_DIR)))
 	{
-		additional = get_full_path(additional);
-		argv[3] = get_full_path(argv[3]);
+		resolve_path(additional, additional_buf, _countof(additional_buf));
+		additional = additional_buf;
+		resolve_path(argv[3], argv3_buf, _countof(argv3_buf));
+		argv[3] = argv3_buf;
 	}
 
 	nssm_service_t* service = alloc_nssm_service();

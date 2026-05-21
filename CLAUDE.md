@@ -28,7 +28,7 @@ Four configurations: `Debug|Win32`, `Debug|x64`, `Release|Win32`, `Release|x64`.
 
 ## C++ Standard
 
-**C++03** — must remain compatible with older MSVC versions. No C++11/14/17 features. Target `_WIN32_WINNT 0x0500` (Windows 2000+).
+**C++03** — must remain compatible with **VS2008+**. No C++11/14/17 features. Target `_WIN32_WINNT 0x0500` (Windows 2000+).
 
 ## Architecture
 
