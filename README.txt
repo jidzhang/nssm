@@ -1,5 +1,5 @@
 NSSM: The Non-Sucking Service Manager
-Version 2.24, 2014-08-31
+Version 2.25, 2026-05-21
 
 NSSM is a service helper program similar to srvany and cygrunsrv.  It can 
 start any application as an NT service and will restart the service if it 
@@ -73,6 +73,10 @@ Since version 2.25, NSSM can list services it manages.
 Since version 2.25, NSSM can dump the configuration of services it manages.
 
 Since version 2.25, NSSM can show the processes managed by a service.
+
+Since version 2.25, NSSM accepts relative paths for the application,
+stdout/stderr output files and startup directory when installing or
+editing services.  Previously absolute paths were required.
 
 
 Usage

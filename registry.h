@@ -39,36 +39,36 @@
 #define NSSM_REG_HOOK _T("AppEvents")
 #define NSSM_STDIO_LENGTH 29
 
-HKEY open_service_registry(const TCHAR *, REGSAM sam, bool);
-long open_registry(const TCHAR *, const TCHAR *, REGSAM sam, HKEY *, bool);
-HKEY open_registry(const TCHAR *, const TCHAR *, REGSAM sam, bool);
-HKEY open_registry(const TCHAR *, const TCHAR *, REGSAM sam);
-HKEY open_registry(const TCHAR *, REGSAM sam);
-long enumerate_registry_values(HKEY, unsigned long *, TCHAR *, unsigned long);
+HKEY open_service_registry(const TCHAR*, REGSAM sam, bool);
+long open_registry(const TCHAR*, const TCHAR*, REGSAM sam, HKEY*, bool);
+HKEY open_registry(const TCHAR*, const TCHAR*, REGSAM sam, bool);
+HKEY open_registry(const TCHAR*, const TCHAR*, REGSAM sam);
+HKEY open_registry(const TCHAR*, REGSAM sam);
+long enumerate_registry_values(HKEY, unsigned long*, TCHAR*, unsigned long);
 int create_messages();
-int create_parameters(nssm_service_t *, bool);
-int create_exit_action(TCHAR *, const TCHAR *, bool);
-int get_environment(TCHAR *, HKEY, TCHAR *, TCHAR **, unsigned long *);
-int get_string(HKEY, TCHAR *, TCHAR *, unsigned long, bool, bool, bool);
-int get_string(HKEY, TCHAR *, TCHAR *, unsigned long, bool);
-int expand_parameter(HKEY, TCHAR *, TCHAR *, unsigned long, bool, bool);
-int expand_parameter(HKEY, TCHAR *, TCHAR *, unsigned long, bool);
-int set_string(HKEY, TCHAR *, TCHAR *, bool);
-int set_string(HKEY, TCHAR *, TCHAR *);
-int set_expand_string(HKEY, TCHAR *, TCHAR *);
-int set_number(HKEY, TCHAR *, unsigned long);
-int get_number(HKEY, TCHAR *, unsigned long *, bool);
-int get_number(HKEY, TCHAR *, unsigned long *);
-int format_double_null(TCHAR *, unsigned long, TCHAR **, unsigned long *);
-int unformat_double_null(TCHAR *, unsigned long, TCHAR **, unsigned long *);
-int copy_double_null(TCHAR *, unsigned long, TCHAR **);
-int append_to_double_null(TCHAR *, unsigned long, TCHAR **, unsigned long *, TCHAR *, size_t, bool);
-int remove_from_double_null(TCHAR *, unsigned long, TCHAR **, unsigned long *, TCHAR *, size_t, bool);
-void override_milliseconds(TCHAR *, HKEY, TCHAR *, unsigned long *, unsigned long, unsigned long);
-int get_io_parameters(nssm_service_t *, HKEY);
-int get_parameters(nssm_service_t *, STARTUPINFO *);
-int get_exit_action(const TCHAR *, unsigned long *, TCHAR *, bool *);
-int set_hook(const TCHAR *, const TCHAR *, const TCHAR *, TCHAR *);
-int get_hook(const TCHAR *, const TCHAR *, const TCHAR *, TCHAR *, unsigned long);
+int create_parameters(nssm_service_t*, bool);
+int create_exit_action(TCHAR*, const TCHAR*, bool);
+int get_environment(TCHAR*, HKEY, TCHAR*, TCHAR**, unsigned long*);
+int get_string(HKEY, TCHAR*, TCHAR*, unsigned long, bool, bool, bool);
+int get_string(HKEY, TCHAR*, TCHAR*, unsigned long, bool);
+int expand_parameter(HKEY, TCHAR*, TCHAR*, unsigned long, bool, bool);
+int expand_parameter(HKEY, TCHAR*, TCHAR*, unsigned long, bool);
+int set_string(HKEY, TCHAR*, TCHAR*, bool);
+int set_string(HKEY, TCHAR*, TCHAR*);
+int set_expand_string(HKEY, TCHAR*, TCHAR*);
+int set_number(HKEY, TCHAR*, unsigned long);
+int get_number(HKEY, TCHAR*, unsigned long*, bool);
+int get_number(HKEY, TCHAR*, unsigned long*);
+int format_double_null(TCHAR*, unsigned long, TCHAR**, unsigned long*);
+int unformat_double_null(TCHAR*, unsigned long, TCHAR**, unsigned long*);
+int copy_double_null(TCHAR*, unsigned long, TCHAR**);
+int append_to_double_null(TCHAR*, unsigned long, TCHAR**, unsigned long*, TCHAR*, size_t, bool);
+int remove_from_double_null(TCHAR*, unsigned long, TCHAR**, unsigned long*, TCHAR*, size_t, bool);
+void override_milliseconds(TCHAR*, HKEY, TCHAR*, unsigned long*, unsigned long, unsigned long);
+int get_io_parameters(nssm_service_t*, HKEY);
+int get_parameters(nssm_service_t*, STARTUPINFO*);
+int get_exit_action(const TCHAR*, unsigned long*, TCHAR*, bool*);
+int set_hook(const TCHAR*, const TCHAR*, const TCHAR*, TCHAR*);
+int get_hook(const TCHAR*, const TCHAR*, const TCHAR*, TCHAR*, unsigned long);
 
 #endif

@@ -56,20 +56,22 @@
 #define NSSM_HOOK_ENV_RUNTIME _T("NSSM_RUNTIME")
 #define NSSM_HOOK_ENV_APPLICATION_RUNTIME _T("NSSM_APPLICATION_RUNTIME")
 
-typedef struct {
-  TCHAR name[HOOK_NAME_LENGTH];
-  HANDLE thread_handle;
+typedef struct
+{
+	TCHAR name[HOOK_NAME_LENGTH];
+	HANDLE thread_handle;
 } hook_thread_data_t;
 
-typedef struct {
-  hook_thread_data_t *data;
-  int num_threads;
+typedef struct
+{
+	hook_thread_data_t* data;
+	int num_threads;
 } hook_thread_t;
 
-bool valid_hook_name(const TCHAR *, const TCHAR *, bool);
-void await_hook_threads(hook_thread_t *, SERVICE_STATUS_HANDLE, SERVICE_STATUS *, unsigned long);
-int nssm_hook(hook_thread_t *, nssm_service_t *, TCHAR *, TCHAR *, unsigned long *, unsigned long, bool);
-int nssm_hook(hook_thread_t *, nssm_service_t *, TCHAR *, TCHAR *, unsigned long *, unsigned long);
-int nssm_hook(hook_thread_t *, nssm_service_t *, TCHAR *, TCHAR *, unsigned long *);
+bool valid_hook_name(const TCHAR*, const TCHAR*, bool);
+void await_hook_threads(hook_thread_t*, SERVICE_STATUS_HANDLE, SERVICE_STATUS*, unsigned long);
+int nssm_hook(hook_thread_t*, nssm_service_t*, TCHAR*, TCHAR*, unsigned long*, unsigned long, bool);
+int nssm_hook(hook_thread_t*, nssm_service_t*, TCHAR*, TCHAR*, unsigned long*, unsigned long);
+int nssm_hook(hook_thread_t*, nssm_service_t*, TCHAR*, TCHAR*, unsigned long*);
 
 #endif
