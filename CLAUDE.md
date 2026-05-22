@@ -15,7 +15,7 @@ NSSM (Non-Sucking Service Manager) is a single-executable Windows NT service wra
 # In a VS Developer Command Prompt:
 msbuild nssm.vcxproj /p:Configuration=Release /p:Platform=x64
 
-# Or open nssm.sln / nssm140.sln in Visual Studio
+# Or open nssm90.sln / nssm140.sln in Visual Studio
 ```
 
 Four configurations: `Debug|Win32`, `Debug|x64`, `Release|Win32`, `Release|x64`. Output goes to `out/<Config>/win32|win64/`. Intermediate files in `tmp/`.
