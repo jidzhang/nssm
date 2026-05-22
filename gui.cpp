@@ -853,7 +853,11 @@ int install(HWND window)
 	if (!window) return 1;
 
 	nssm_service_t* service = alloc_nssm_service();
-	if (service)
+	if (!service)
+	{
+		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("install()"));
+		return 1;
+	}
 	{
 		int ret = configure(window, service, 0);
 		if (ret) return ret;
@@ -907,7 +911,11 @@ int remove(HWND window)
 
 	/* See if it works */
 	nssm_service_t* service = alloc_nssm_service();
-	if (service)
+	if (!service)
+	{
+		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("remove()"));
+		return 1;
+	}
 	{
 		/* Get service name */
 		if (!GetDlgItemText(window, IDC_NAME, service->name, _countof(service->name)))
@@ -958,7 +966,11 @@ int edit(HWND window, nssm_service_t* orig_service)
 	if (!window) return 1;
 
 	nssm_service_t* service = alloc_nssm_service();
-	if (service)
+	if (!service)
+	{
+		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("edit()"));
+		return 1;
+	}
 	{
 		int ret = configure(window, service, orig_service);
 		if (ret) return ret;

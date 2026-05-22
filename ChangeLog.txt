@@ -1,3 +1,32 @@
+Changes since 2.25
+------------------
+  * Security hardening: use LOAD_LIBRARY_SEARCH_SYSTEM32 for DLL
+    loading with runtime fallback for Windows 2000 compatibility.
+
+  * Bug fix: is_admin changed from bool to BOOL to prevent stack
+    corruption when written through a PBOOL pointer.
+
+  * Bug fix: CreateProcess first-parameter extraction in hook.cpp
+    now correctly parses the executable path from the command line.
+
+  * Bug fix: removed static local variable in io.cpp that caused
+    data corruption across multiple service instances.
+
+  * Resource leak fixes across service.cpp, io.cpp, registry.cpp,
+    event.cpp, account.cpp and gui.cpp.
+
+  * NULL pointer hardening in GUI controls and registry operations.
+
+  * Added comprehensive unit test suite (catch2) and integration
+    test suite (Pester 3.4, inbox on Windows 10).
+
+  * Added run_all_tests.bat for one-command build and test.
+
+  * Added clean.bat to remove all build and test artifacts.
+
+  * Added VS2019 solution file (nssm140.sln) for development.
+    Production builds continue to use VS2008 (nssm.sln).
+
 Changes since 2.24
 ------------------
   * Allow skipping kill_process_tree().

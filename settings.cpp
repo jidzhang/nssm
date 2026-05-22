@@ -302,6 +302,7 @@ static int setting_dump_exit_action(const TCHAR* service_name, void* param, cons
 		else if (ret < 0) errors++;
 	}
 
+	RegCloseKey(key);
 	if (errors) return -1;
 	return 0;
 }

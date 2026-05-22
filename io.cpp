@@ -223,7 +223,7 @@ int delete_createfile_parameter(HKEY key, TCHAR* prefix, TCHAR* suffix)
 
 HANDLE write_to_file(TCHAR* path, unsigned long sharing, SECURITY_ATTRIBUTES* attributes, unsigned long disposition, unsigned long flags)
 {
-	static LARGE_INTEGER offset = { 0 };
+	const LARGE_INTEGER offset = { 0 };
 	HANDLE ret = CreateFile(path, FILE_WRITE_DATA, sharing, attributes, disposition, flags, 0);
 	if (ret != INVALID_HANDLE_VALUE)
 	{

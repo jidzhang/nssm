@@ -194,6 +194,8 @@ int test_environment(TCHAR* env)
 	if (CreateProcess(0, path, 0, 0, 0, flags, env, 0, &si, &pi))
 	{
 		TerminateProcess(pi.hProcess, 0);
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
 	}
 	else
 	{

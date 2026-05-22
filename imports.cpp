@@ -1,5 +1,11 @@
 #include "nssm.h"
 
+/* LOAD_LIBRARY_SEARCH_SYSTEM32 is only available from Windows 8 / VS2012.
+   Define it for older SDKs so we can use it at runtime with a fallback. */
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x800
+#endif
+
 imports_t imports;
 
 /*
@@ -13,7 +19,8 @@ HMODULE get_dll(const TCHAR* dll, unsigned long* error)
 {
 	*error = 0;
 
-	HMODULE ret = LoadLibrary(dll);
+	HMODULE ret = LoadLibraryEx(dll, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+	if (!ret) ret = LoadLibrary(dll);
 	if (!ret)
 	{
 		*error = GetLastError();

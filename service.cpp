@@ -1,6 +1,6 @@
 #include "nssm.h"
 
-bool is_admin;
+BOOL is_admin;
 bool use_critical_section;
 
 extern imports_t imports;
@@ -26,7 +26,7 @@ void resolve_path(const TCHAR* path, TCHAR* buffer, size_t buflen)
 		else buffer[0] = _T('\0');
 		return;
 	}
-	if (GetFullPathName(path, (unsigned long) buflen, buffer, NULL) == 0)
+	if (GetFullPathName(path, (unsigned long)buflen, buffer, NULL) == 0)
 		_tcsncpy_s(buffer, buflen, path, _TRUNCATE);
 }
 
@@ -191,7 +191,7 @@ int affinity_mask_to_string(__int64 mask, TCHAR** string)
 	/* Worst case is 2x2 characters for first and last CPU plus - and/or , */
 	size_t len = (size_t)(n + 1) * 6;
 	*string = (TCHAR*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len * sizeof(TCHAR));
-	if (!string) return 2;
+	if (!*string) return 2;
 
 	size_t s = 0;
 	int ret;
@@ -603,6 +603,7 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 			if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, NSSM_REGISTRY_GROUPS, 0, KEY_READ, &key))
 			{
 				_ftprintf(stderr, _T("%s: %s\n"), NSSM_REGISTRY_GROUPS, error_string(GetLastError()));
+				CloseServiceHandle(services);
 				return 2;
 			}
 
@@ -615,6 +616,8 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 				if (!groups)
 				{
 					print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("groups"), _T("set_service_dependencies()"));
+					RegCloseKey(key);
+					CloseServiceHandle(services);
 					return 3;
 				}
 
@@ -624,6 +627,7 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 					_ftprintf(stderr, _T("%s\\%s: %s"), NSSM_REGISTRY_GROUPS, NSSM_REG_GROUPS, error_string(GetLastError()));
 					HeapFree(GetProcessHeap(), 0, groups);
 					RegCloseKey(key);
+					CloseServiceHandle(services);
 					return 4;
 				}
 			}
@@ -631,6 +635,7 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 			{
 				_ftprintf(stderr, _T("%s\\%s: %s"), NSSM_REGISTRY_GROUPS, NSSM_REG_GROUPS, error_string(GetLastError()));
 				RegCloseKey(key);
+				CloseServiceHandle(services);
 				return 4;
 			}
 
@@ -671,6 +676,7 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 				{
 					HeapFree(GetProcessHeap(), 0, dependencies);
 					if (groups) HeapFree(GetProcessHeap(), 0, groups);
+					CloseServiceHandle(services);
 					_ftprintf(stderr, _T("%s: %s"), s, error_string(ERROR_SERVICE_DEPENDENCY_DELETED));
 					return 5;
 				}
@@ -978,17 +984,16 @@ void cleanup_nssm_service(nssm_service_t* service)
 int pre_install_service(int argc, TCHAR** argv)
 {
 	nssm_service_t* service = alloc_nssm_service();
-	set_nssm_service_defaults(service);
-	if (argc) _sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), argv[0]);
-
-	/* Show the dialogue box if we didn't give the service name and path */
-	if (argc < 2) return nssm_gui(IDD_INSTALL, service);
-
 	if (!service)
 	{
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("service"), _T("pre_install_service()"));
 		return 1;
 	}
+	set_nssm_service_defaults(service);
+	if (argc) _sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), argv[0]);
+
+	/* Show the dialogue box if we didn't give the service name and path */
+	if (argc < 2) return nssm_gui(IDD_INSTALL, service);
 	TCHAR exe_path[MAX_PATH] = { 0 };
 	resolve_path(argv[1], exe_path, _countof(exe_path));
 	_sntprintf_s(service->exe, _countof(service->exe), _TRUNCATE, _T("%s"), exe_path);
@@ -1124,6 +1129,11 @@ int pre_edit_service(int argc, TCHAR** argv)
 	}
 
 	nssm_service_t* service = alloc_nssm_service();
+	if (!service)
+	{
+		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("service"), _T("pre_edit_service()"));
+		return 1;
+	}
 	_sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), service_name);
 
 	/* Open service manager */
@@ -1249,15 +1259,31 @@ int pre_edit_service(int argc, TCHAR** argv)
 		else
 		{
 			key = open_registry(service->name, KEY_READ);
-			if (!key) return 4;
+			if (!key)
+			{
+				CloseServiceHandle(service->handle);
+				return 4;
+			}
 		}
 
 		TCHAR quoted_service_name[SERVICE_NAME_LENGTH * 2];
 		TCHAR quoted_exe[EXE_LENGTH * 2];
 		TCHAR quoted_nssm[EXE_LENGTH * 2];
-		if (quote(service_name, quoted_service_name, _countof(quoted_service_name))) return 5;
-		if (quote(service->exe, quoted_exe, _countof(quoted_exe))) return 6;
-		if (quote(nssm_exe(), quoted_nssm, _countof(quoted_nssm))) return 6;
+		if (quote(service_name, quoted_service_name, _countof(quoted_service_name)))
+		{
+			CloseServiceHandle(service->handle);
+			return 5;
+		}
+		if (quote(service->exe, quoted_exe, _countof(quoted_exe)))
+		{
+			CloseServiceHandle(service->handle);
+			return 6;
+		}
+		if (quote(nssm_exe(), quoted_nssm, _countof(quoted_nssm)))
+		{
+			CloseServiceHandle(service->handle);
+			return 6;
+		}
 		_tprintf(_T("%s install %s %s\n"), quoted_nssm, quoted_service_name, quoted_exe);
 
 		ret = 0;
@@ -1288,7 +1314,11 @@ int pre_edit_service(int argc, TCHAR** argv)
 		if (!service->native)
 		{
 			key = open_registry(service->name, KEY_READ);
-			if (!key) return 4;
+			if (!key)
+			{
+				CloseServiceHandle(service->handle);
+				return 4;
+			}
 		}
 
 		if (setting->native) ret = get_setting(service->name, service->handle, setting, &value, additional);
@@ -1369,6 +1399,7 @@ int pre_edit_service(int argc, TCHAR** argv)
 		if (!key)
 		{
 			if (value.string) HeapFree(GetProcessHeap(), 0, value.string);
+			CloseServiceHandle(service->handle);
 			return 4;
 		}
 	}
@@ -1393,6 +1424,11 @@ int pre_edit_service(int argc, TCHAR** argv)
 int pre_remove_service(int argc, TCHAR** argv)
 {
 	nssm_service_t* service = alloc_nssm_service();
+	if (!service)
+	{
+		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("service"), _T("pre_remove_service()"));
+		return 1;
+	}
 	set_nssm_service_defaults(service);
 	if (argc) _sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), argv[0]);
 
@@ -1426,7 +1462,7 @@ int install_service(nssm_service_t* service)
 	_sntprintf_s(service->image, _countof(service->image), _TRUNCATE, _T("%s"), nssm_imagepath());
 
 	/* Create the service - settings will be changed in edit_service() */
-	service->handle = CreateService(services, service->name, service->name, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, service->image, 0, 0, 0, 0, 0);
+	service->handle = CreateService(services, service->name, service->name, SERVICE_CHANGE_CONFIG | SERVICE_START, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, service->image, 0, 0, 0, 0, 0);
 	if (!service->handle)
 	{
 		print_message(stderr, NSSM_MESSAGE_CREATESERVICE_FAILED, error_string(GetLastError()));
@@ -1677,6 +1713,8 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		*/
 		ret = QueryServiceStatus(service_handle, &service_status);
 		error = GetLastError();
+		CloseServiceHandle(service_handle);
+		CloseServiceHandle(services);
 
 		if (ret)
 		{
@@ -2173,7 +2211,7 @@ int start_service(nssm_service_t* service)
 		if (service->affinity) flags |= CREATE_SUSPENDED;
 		if (!service->no_console) flags |= CREATE_NEW_CONSOLE;
 
-		if (!CreateProcess(0, cmd, 0, 0, inherit_handles, flags, 0, service->dir, &si, &pi))
+		if (!CreateProcess(service->exe, cmd, 0, 0, inherit_handles, flags, 0, service->dir, &si, &pi))
 		{
 			unsigned long exitcode = 3;
 			unsigned long error = GetLastError();
@@ -2221,6 +2259,8 @@ int start_service(nssm_service_t* service)
 
 			ResumeThread(pi.hThread);
 		}
+
+		CloseHandle(pi.hThread);
 	}
 
 	/* Restore our environment. */
@@ -2589,6 +2629,7 @@ int list_nssm_services(int argc, TCHAR** argv)
 	if (error != ERROR_MORE_DATA)
 	{
 		print_message(stderr, NSSM_MESSAGE_ENUMSERVICESSTATUS_FAILED, error_string(GetLastError()));
+		CloseServiceHandle(services);
 		return 2;
 	}
 
@@ -2596,6 +2637,7 @@ int list_nssm_services(int argc, TCHAR** argv)
 	if (!status)
 	{
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("ENUM_SERVICE_STATUS_PROCESS"), _T("list_nssm_services()"));
+		CloseServiceHandle(services);
 		return 3;
 	}
 
@@ -2610,6 +2652,7 @@ int list_nssm_services(int argc, TCHAR** argv)
 			{
 				HeapFree(GetProcessHeap(), 0, status);
 				print_message(stderr, NSSM_MESSAGE_ENUMSERVICESSTATUS_FAILED, error_string(GetLastError()));
+				CloseServiceHandle(services);
 				return 4;
 			}
 		}
@@ -2622,6 +2665,7 @@ int list_nssm_services(int argc, TCHAR** argv)
 			{
 				HeapFree(GetProcessHeap(), 0, status);
 				print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("nssm_service_t"), _T("list_nssm_services()"));
+				CloseServiceHandle(services);
 				return 5;
 			}
 			_sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), status[i].lpServiceName);

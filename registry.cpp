@@ -75,6 +75,7 @@ int create_messages()
 	unsigned long types = EVENTLOG_INFORMATION_TYPE | EVENTLOG_WARNING_TYPE | EVENTLOG_ERROR_TYPE;
 	RegSetValueEx(key, _T("TypesSupported"), 0, REG_DWORD, (const unsigned char*)&types, sizeof(types));
 
+	RegCloseKey(key);
 	return 0;
 }
 
@@ -129,6 +130,7 @@ int create_parameters(nssm_service_t* service, bool editing)
 			{
 				log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_SETVALUE_FAILED, NSSM_REG_AFFINITY, error_string(GetLastError()), 0);
 				HeapFree(GetProcessHeap(), 0, string);
+				RegCloseKey(key);
 				return 5;
 			}
 		}

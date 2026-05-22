@@ -14,7 +14,7 @@ int open_lsa_policy(LSA_HANDLE* policy)
 	LSA_OBJECT_ATTRIBUTES attributes;
 	ZeroMemory(&attributes, sizeof(attributes));
 
-	NTSTATUS status = LsaOpenPolicy(0, &attributes, POLICY_ALL_ACCESS, policy);
+	NTSTATUS status = LsaOpenPolicy(0, &attributes, POLICY_LOOKUP_NAMES | POLICY_CREATE_ACCOUNT, policy);
 	if (status != STATUS_SUCCESS)
 	{
 		print_message(stderr, NSSM_MESSAGE_LSAOPENPOLICY_FAILED, error_string(LsaNtStatusToWinError(status)));

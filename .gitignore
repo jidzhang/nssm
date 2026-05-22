@@ -19,5 +19,21 @@ version.h
 # Upgrade log
 UpgradeLog.htm
 
+# Test binary and objects
+tests/*.exe
+tests/*.obj
+
+# Test results
+tests/integration/TestResults.xml
+
+# Temporary test wrapper
+_run_single_test.tmp.ps1
+
+# Binary resource file (VS auto-generated)
+*.aps
+
+# One-time build verification script
+build_verify.bat
+
 # Logs
 *.log

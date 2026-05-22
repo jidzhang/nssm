@@ -1,7 +1,7 @@
 #include "nssm.h"
 
 extern unsigned long tls_index;
-extern bool is_admin;
+extern BOOL is_admin;
 extern imports_t imports;
 
 static TCHAR unquoted_imagepath[PATH_LENGTH];
