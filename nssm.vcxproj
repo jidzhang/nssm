@@ -304,7 +304,9 @@
     <ClInclude Include="console.h" />
     <ClInclude Include="env.h" />
     <ClInclude Include="event.h" />
+    <ClInclude Include="guards.h" />
     <ClInclude Include="gui.h" />
+    <ClInclude Include="heap_ptr.h" />
     <ClInclude Include="hook.h" />
     <ClInclude Include="imports.h" />
     <ClInclude Include="io.h" />

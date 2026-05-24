@@ -264,8 +264,8 @@ void rotate_file(TCHAR* service_name, TCHAR* path, unsigned long seconds, unsign
 	BY_HANDLE_FILE_INFORMATION info;
 
 	/* Try to open the file to check if it exists and to get attributes. */
-	HANDLE file = CreateFile(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	if (file != INVALID_HANDLE_VALUE)
+	HandleGuard file(CreateFile(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0));
+	if (file)
 	{
 		/* Get file attributes. */
 		if (!GetFileInformationByHandle(file, &info))
@@ -274,8 +274,6 @@ void rotate_file(TCHAR* service_name, TCHAR* path, unsigned long seconds, unsign
 			seconds = low = high = 0;
 			SystemTimeToFileTime(&st, &info.ftLastWriteTime);
 		}
-
-		CloseHandle(file);
 	}
 	else
 	{
@@ -323,11 +321,10 @@ void rotate_file(TCHAR* service_name, TCHAR* path, unsigned long seconds, unsign
 		function = _T("CopyFile()");
 		if (CopyFile(path, rotated, TRUE))
 		{
-			file = write_to_file(path, NSSM_STDOUT_SHARING, 0, NSSM_STDOUT_DISPOSITION, NSSM_STDOUT_FLAGS);
+			HandleGuard trunc(write_to_file(path, NSSM_STDOUT_SHARING, 0, NSSM_STDOUT_DISPOSITION, NSSM_STDOUT_FLAGS));
 			Sleep(delay);
-			SetFilePointer(file, 0, 0, FILE_BEGIN);
-			SetEndOfFile(file);
-			CloseHandle(file);
+			SetFilePointer(trunc, 0, 0, FILE_BEGIN);
+			SetEndOfFile(trunc);
 		}
 		else ok = false;
 	}
@@ -346,6 +343,60 @@ void rotate_file(TCHAR* service_name, TCHAR* path, unsigned long seconds, unsign
 	if (error == ERROR_FILE_NOT_FOUND) return;
 	log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_ROTATE_FILE_FAILED, service_name, path, function, rotated, error_string(error), 0);
 	return;
+}
+
+/* Configuration for setting up one output stream (stdout or stderr). */
+struct stream_config {
+	TCHAR* path;
+	unsigned long sharing;
+	unsigned long disposition;
+	unsigned long flags;
+	bool use_pipe;
+	HANDLE* si_handle;          /* &service->stdout_si or &service->stderr_si */
+	HANDLE* pipe_handle;        /* &service->stdout_pipe or &service->stderr_pipe */
+	HANDLE* thread_handle;      /* &service->stdout_thread or &service->stderr_thread */
+	unsigned long* tid;         /* &service->stdout_tid or &service->stderr_tid */
+	unsigned long* rotate_online;
+	bool copy_and_truncate;
+	const TCHAR* reg_name;      /* NSSM_REG_STDOUT or NSSM_REG_STDERR */
+	const TCHAR* stream_name;   /* _T("stdout") or _T("stderr") */
+	int error_code;             /* return code on failure (4 for stdout, 7 for stderr) */
+};
+
+/*
+  Set up one output stream: optionally rotate, open the file,
+  create a logging thread if piped, and duplicate the handle
+  into the service struct.
+  Returns 0 on success or a positive error code on failure.
+  The caller must still dup the si_handle into STARTUPINFO.
+*/
+static int setup_output_stream(nssm_service_t* service, stream_config* cfg, HANDLE* startup_handle)
+{
+	if (service->rotate_files) rotate_file(service->name, cfg->path, service->rotate_seconds, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, cfg->copy_and_truncate);
+
+	HANDLE handle = write_to_file(cfg->path, cfg->sharing, 0, cfg->disposition, cfg->flags);
+	if (handle == INVALID_HANDLE_VALUE) return cfg->error_code;
+	*cfg->si_handle = 0;
+
+	if (cfg->use_pipe)
+	{
+		*cfg->pipe_handle = *startup_handle = 0;
+		*cfg->thread_handle = create_logging_thread(service->name, cfg->path, cfg->sharing, cfg->disposition, cfg->flags, cfg->pipe_handle, cfg->si_handle, &handle, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, cfg->tid, cfg->rotate_online, service->timestamp_log, cfg->copy_and_truncate);
+		if (!*cfg->thread_handle)
+		{
+			CloseHandle(*cfg->pipe_handle);
+			CloseHandle(*cfg->si_handle);
+		}
+	}
+	else *cfg->thread_handle = 0;
+
+	if (!*cfg->thread_handle)
+	{
+		if (dup_handle(handle, cfg->si_handle, (TCHAR*)cfg->reg_name, (TCHAR*)cfg->stream_name, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS)) return cfg->error_code;
+		*cfg->rotate_online = NSSM_ROTATE_OFFLINE;
+	}
+
+	return 0;
 }
 
 int get_output_handles(nssm_service_t* service, STARTUPINFO* si)
@@ -372,28 +423,25 @@ int get_output_handles(nssm_service_t* service, STARTUPINFO* si)
 	/* stdout */
 	if (service->stdout_path[0])
 	{
-		if (service->rotate_files) rotate_file(service->name, service->stdout_path, service->rotate_seconds, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, service->stdout_copy_and_truncate);
-		HANDLE stdout_handle = write_to_file(service->stdout_path, service->stdout_sharing, 0, service->stdout_disposition, service->stdout_flags);
-		if (stdout_handle == INVALID_HANDLE_VALUE) return 4;
-		service->stdout_si = 0;
+		stream_config stdout_cfg = {
+			service->stdout_path,
+			service->stdout_sharing,
+			service->stdout_disposition,
+			service->stdout_flags,
+			service->use_stdout_pipe,
+			&service->stdout_si,
+			&service->stdout_pipe,
+			&service->stdout_thread,
+			&service->stdout_tid,
+			&service->rotate_stdout_online,
+			service->stdout_copy_and_truncate,
+			NSSM_REG_STDOUT,
+			_T("stdout"),
+			4
+		};
 
-		if (service->use_stdout_pipe)
-		{
-			service->stdout_pipe = si->hStdOutput = 0;
-			service->stdout_thread = create_logging_thread(service->name, service->stdout_path, service->stdout_sharing, service->stdout_disposition, service->stdout_flags, &service->stdout_pipe, &service->stdout_si, &stdout_handle, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, &service->stdout_tid, &service->rotate_stdout_online, service->timestamp_log, service->stdout_copy_and_truncate);
-			if (!service->stdout_thread)
-			{
-				CloseHandle(service->stdout_pipe);
-				CloseHandle(service->stdout_si);
-			}
-		}
-		else service->stdout_thread = 0;
-
-		if (!service->stdout_thread)
-		{
-			if (dup_handle(stdout_handle, &service->stdout_si, NSSM_REG_STDOUT, _T("stdout"), DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS)) return 4;
-			service->rotate_stdout_online = NSSM_ROTATE_OFFLINE;
-		}
+		int ret = setup_output_stream(service, &stdout_cfg, &si->hStdOutput);
+		if (ret) return ret;
 
 		if (dup_handle(service->stdout_si, &si->hStdOutput, _T("stdout_si"), _T("stdout"))) close_handle(&service->stdout_thread);
 
@@ -417,28 +465,25 @@ int get_output_handles(nssm_service_t* service, STARTUPINFO* si)
 		}
 		else
 		{
-			if (service->rotate_files) rotate_file(service->name, service->stderr_path, service->rotate_seconds, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, service->stderr_copy_and_truncate);
-			HANDLE stderr_handle = write_to_file(service->stderr_path, service->stderr_sharing, 0, service->stderr_disposition, service->stderr_flags);
-			if (stderr_handle == INVALID_HANDLE_VALUE) return 7;
-			service->stderr_si = 0;
+			stream_config stderr_cfg = {
+				service->stderr_path,
+				service->stderr_sharing,
+				service->stderr_disposition,
+				service->stderr_flags,
+				service->use_stderr_pipe,
+				&service->stderr_si,
+				&service->stderr_pipe,
+				&service->stderr_thread,
+				&service->stderr_tid,
+				&service->rotate_stderr_online,
+				service->stderr_copy_and_truncate,
+				NSSM_REG_STDERR,
+				_T("stderr"),
+				7
+			};
 
-			if (service->use_stderr_pipe)
-			{
-				service->stderr_pipe = si->hStdError = 0;
-				service->stderr_thread = create_logging_thread(service->name, service->stderr_path, service->stderr_sharing, service->stderr_disposition, service->stderr_flags, &service->stderr_pipe, &service->stderr_si, &stderr_handle, service->rotate_bytes_low, service->rotate_bytes_high, service->rotate_delay, &service->stderr_tid, &service->rotate_stderr_online, service->timestamp_log, service->stderr_copy_and_truncate);
-				if (!service->stderr_thread)
-				{
-					CloseHandle(service->stderr_pipe);
-					CloseHandle(service->stderr_si);
-				}
-			}
-			else service->stderr_thread = 0;
-
-			if (!service->stderr_thread)
-			{
-				if (dup_handle(stderr_handle, &service->stderr_si, NSSM_REG_STDERR, _T("stderr"), DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS)) return 7;
-				service->rotate_stderr_online = NSSM_ROTATE_OFFLINE;
-			}
+			int ret = setup_output_stream(service, &stderr_cfg, &si->hStdError);
+			if (ret) return ret;
 		}
 
 		if (dup_handle(service->stderr_si, &si->hStdError, _T("stderr_si"), _T("stderr"))) close_handle(&service->stderr_thread);

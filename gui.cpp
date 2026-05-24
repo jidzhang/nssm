@@ -102,9 +102,9 @@ int nssm_gui(int resource, nssm_service_t* service)
 		SendMessage(combo, CB_SETCURSEL, service->startup, 0);
 
 		/* Log on tab. */
-		if (service->username)
+		if (!service->username.empty())
 		{
-			if (is_virtual_account(service->name, service->username))
+			if (is_virtual_account(service->name, service->username.c_str()))
 			{
 				CheckRadioButton(tablist[NSSM_TAB_LOGON], IDC_LOCALSYSTEM, IDC_VIRTUAL_SERVICE, IDC_VIRTUAL_SERVICE);
 				set_logon_enabled(0, 0);
@@ -112,7 +112,7 @@ int nssm_gui(int resource, nssm_service_t* service)
 			else
 			{
 				CheckRadioButton(tablist[NSSM_TAB_LOGON], IDC_LOCALSYSTEM, IDC_VIRTUAL_SERVICE, IDC_ACCOUNT);
-				SetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_USERNAME, service->username);
+				SetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_USERNAME, service->username.c_str());
 				set_logon_enabled(0, 1);
 			}
 		}
@@ -123,11 +123,11 @@ int nssm_gui(int resource, nssm_service_t* service)
 		}
 
 		/* Dependencies tab. */
-		if (service->dependencieslen)
+		if (!service->dependencies.empty())
 		{
 			TCHAR* formatted;
 			unsigned long newlen;
-			if (format_double_null(service->dependencies, service->dependencieslen, &formatted, &newlen))
+			if (format_double_null(&service->dependencies[0], (unsigned long)service->dependencies.size(), &formatted, &newlen))
 			{
 				popup_message(dlg, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("dependencies"), _T("nssm_dlg()"));
 			}
@@ -230,17 +230,17 @@ int nssm_gui(int resource, nssm_service_t* service)
 		if (service->rotate_bytes_high) popup_message(dlg, MB_OK | MB_ICONWARNING, NSSM_GUI_WARN_ROTATE_BYTES);
 
 		/* Environment tab. */
-		TCHAR* env;
+		const TCHAR* env;
 		unsigned long envlen;
-		if (service->env_extralen)
+		if (!service->env_extra.empty())
 		{
-			env = service->env_extra;
-			envlen = service->env_extralen;
+			env = &service->env_extra[0];
+			envlen = (unsigned long)service->env_extra.size();
 		}
 		else
 		{
-			env = service->env;
-			envlen = service->envlen;
+			env = &service->env[0];
+			envlen = (unsigned long)service->env.size();
 			if (envlen) SendDlgItemMessage(tablist[NSSM_TAB_ENVIRONMENT], IDC_ENVIRONMENT_REPLACE, BM_SETCHECK, BST_CHECKED, 0);
 		}
 
@@ -248,7 +248,7 @@ int nssm_gui(int resource, nssm_service_t* service)
 		{
 			TCHAR* formatted;
 			unsigned long newlen;
-			if (format_double_null(env, envlen, &formatted, &newlen))
+			if (format_double_null(const_cast<TCHAR*>(env), envlen, &formatted, &newlen))
 			{
 				popup_message(dlg, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("environment"), _T("nssm_dlg()"));
 			}
@@ -258,7 +258,7 @@ int nssm_gui(int resource, nssm_service_t* service)
 				HeapFree(GetProcessHeap(), 0, formatted);
 			}
 		}
-		if (service->envlen && service->env_extralen) popup_message(dlg, MB_OK | MB_ICONWARNING, NSSM_GUI_WARN_ENVIRONMENT);
+		if (!service->env.empty() && !service->env_extra.empty()) popup_message(dlg, MB_OK | MB_ICONWARNING, NSSM_GUI_WARN_ENVIRONMENT);
 	}
 
 	/* Go! */
@@ -455,7 +455,6 @@ int configure(HWND window, nssm_service_t* service, nssm_service_t* orig_service
 	if (!GetDlgItemText(window, IDC_NAME, service->name, _countof(service->name)))
 	{
 		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_MISSING_SERVICE_NAME);
-		cleanup_nssm_service(service);
 		return 2;
 	}
 
@@ -516,170 +515,120 @@ int configure(HWND window, nssm_service_t* service, nssm_service_t* orig_service
 		{
 			service->type |= SERVICE_INTERACTIVE_PROCESS;
 		}
-		if (service->username) HeapFree(GetProcessHeap(), 0, service->username);
-		service->username = 0;
-		service->usernamelen = 0;
-		if (service->password)
-		{
-			SecureZeroMemory(service->password, service->passwordlen * sizeof(TCHAR));
-			HeapFree(GetProcessHeap(), 0, service->password);
-		}
-		service->password = 0;
-		service->passwordlen = 0;
+		service->username.clear();
+		secure_clear(service->password);
 	}
 	else if (SendDlgItemMessage(tablist[NSSM_TAB_LOGON], IDC_VIRTUAL_SERVICE, BM_GETCHECK, 0, 0) & BST_CHECKED)
 	{
-		if (service->username) HeapFree(GetProcessHeap(), 0, service->username);
-		service->username = virtual_account(service->name);
-		if (!service->username)
+		service->username.clear();
+		TCHAR* va = virtual_account(service->name);
+		if (!va)
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("account name"), _T("install()"));
 			return 6;
 		}
-		service->usernamelen = _tcslen(service->username) + 1;
-		service->password = 0;
-		service->passwordlen = 0;
+		service->username = va;
+		HeapFree(GetProcessHeap(), 0, va);
+		secure_clear(service->password);
 	}
 	else
 	{
 		/* Username. */
-		service->usernamelen = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_USERNAME), WM_GETTEXTLENGTH, 0, 0);
-		if (!service->usernamelen)
+		size_t usernamelen = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_USERNAME), WM_GETTEXTLENGTH, 0, 0);
+		if (!usernamelen)
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_MISSING_USERNAME);
 			return 6;
 		}
-		service->usernamelen++;
 
-		service->username = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, service->usernamelen * sizeof(TCHAR));
-		if (!service->username)
+		TCHAR username_buf[SERVICE_NAME_LENGTH];
+		if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_USERNAME, username_buf, _countof(username_buf)))
 		{
-			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("account name"), _T("install()"));
-			return 6;
-		}
-		if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_USERNAME, service->username, (int)service->usernamelen))
-		{
-			HeapFree(GetProcessHeap(), 0, service->username);
-			service->username = 0;
-			service->usernamelen = 0;
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_USERNAME);
 			return 6;
 		}
+		service->username = username_buf;
 
 		/*
 		  Special case for well-known accounts.
 		  Ignore the password if we're editing and the username hasn't changed.
 		*/
-		const TCHAR* well_known = well_known_username(service->username);
+		const TCHAR* well_known = well_known_username(service->username.c_str());
 		if (well_known)
 		{
 			if (str_equiv(well_known, NSSM_LOCALSYSTEM_ACCOUNT))
 			{
-				HeapFree(GetProcessHeap(), 0, service->username);
-				service->username = 0;
-				service->usernamelen = 0;
+				service->username.clear();
 			}
 			else
 			{
-				service->usernamelen = _tcslen(well_known) + 1;
-				service->username = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, service->usernamelen * sizeof(TCHAR));
-				if (!service->username)
-				{
-					print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("canon"), _T("install()"));
-					return 6;
-				}
-				memmove(service->username, well_known, service->usernamelen * sizeof(TCHAR));
+				service->username = well_known;
 			}
 		}
 		else
 		{
 			/* Password. */
-			service->passwordlen = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_PASSWORD1), WM_GETTEXTLENGTH, 0, 0);
-			size_t passwordlen = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_PASSWORD2), WM_GETTEXTLENGTH, 0, 0);
+			size_t password1_len = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_PASSWORD1), WM_GETTEXTLENGTH, 0, 0);
+			size_t password2_len = SendMessage(GetDlgItem(tablist[NSSM_TAB_LOGON], IDC_PASSWORD2), WM_GETTEXTLENGTH, 0, 0);
 
-			if (!orig_service || !orig_service->username || !str_equiv(service->username, orig_service->username) || service->passwordlen || passwordlen)
+			if (!orig_service || orig_service->username.empty() || !str_equiv(service->username.c_str(), orig_service->username.c_str()) || password1_len || password2_len)
 			{
-				if (!service->passwordlen)
+				if (!password1_len)
 				{
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_MISSING_PASSWORD);
 					return 6;
 				}
-				if (passwordlen != service->passwordlen)
+				if (password2_len != password1_len)
 				{
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_MISSING_PASSWORD);
 					return 6;
 				}
-				service->passwordlen++;
 
 				/* Temporary buffer for password validation. */
-				TCHAR* password = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, service->passwordlen * sizeof(TCHAR));
-				if (!password)
+				ScopedHeapBuffer<TCHAR> confirm_buf(password1_len + 1);
+				if (!confirm_buf)
 				{
-					HeapFree(GetProcessHeap(), 0, service->username);
-					service->username = 0;
-					service->usernamelen = 0;
+					service->username.clear();
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("password confirmation"), _T("install()"));
 					return 6;
 				}
 
-				/* Actual password buffer. */
-				service->password = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, service->passwordlen * sizeof(TCHAR));
-				if (!service->password)
-				{
-					HeapFree(GetProcessHeap(), 0, password);
-					HeapFree(GetProcessHeap(), 0, service->username);
-					service->username = 0;
-					service->usernamelen = 0;
-					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("password"), _T("install()"));
-					return 6;
-				}
-
 				/* Get first password. */
-				if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_PASSWORD1, service->password, (int)service->passwordlen))
+				TCHAR password_buf[VALUE_LENGTH];
+				secure_clear(service->password);
+				if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_PASSWORD1, password_buf, _countof(password_buf)))
 				{
-					HeapFree(GetProcessHeap(), 0, password);
-					SecureZeroMemory(service->password, service->passwordlen * sizeof(TCHAR));
-					HeapFree(GetProcessHeap(), 0, service->password);
-					service->password = 0;
-					service->passwordlen = 0;
-					HeapFree(GetProcessHeap(), 0, service->username);
-					service->username = 0;
-					service->usernamelen = 0;
+					SecureZeroMemory(password_buf, sizeof(password_buf));
+					service->username.clear();
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_PASSWORD);
 					return 6;
 				}
+				service->password = password_buf;
 
 				/* Get confirmation. */
-				if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_PASSWORD2, password, (int)service->passwordlen))
+				if (!GetDlgItemText(tablist[NSSM_TAB_LOGON], IDC_PASSWORD2, confirm_buf, (int)(password1_len + 1)))
 				{
-					SecureZeroMemory(password, service->passwordlen * sizeof(TCHAR));
-					HeapFree(GetProcessHeap(), 0, password);
-					SecureZeroMemory(service->password, service->passwordlen * sizeof(TCHAR));
-					HeapFree(GetProcessHeap(), 0, service->password);
-					service->password = 0;
-					service->passwordlen = 0;
-					HeapFree(GetProcessHeap(), 0, service->username);
-					service->username = 0;
-					service->usernamelen = 0;
+					SecureZeroMemory(password_buf, sizeof(password_buf));
+					SecureZeroMemory(confirm_buf.get(), (password1_len + 1) * sizeof(TCHAR));
+					secure_clear(service->password);
+					service->username.clear();
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_PASSWORD);
 					return 6;
 				}
 
 				/* Compare. */
-				if (_tcsncmp(password, service->password, service->passwordlen))
+				if (_tcsncmp(confirm_buf, password_buf, password1_len + 1))
 				{
 					popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_MISSING_PASSWORD);
-					SecureZeroMemory(password, service->passwordlen * sizeof(TCHAR));
-					HeapFree(GetProcessHeap(), 0, password);
-					SecureZeroMemory(service->password, service->passwordlen * sizeof(TCHAR));
-					HeapFree(GetProcessHeap(), 0, service->password);
-					service->password = 0;
-					service->passwordlen = 0;
-					HeapFree(GetProcessHeap(), 0, service->username);
-					service->username = 0;
-					service->usernamelen = 0;
+					SecureZeroMemory(password_buf, sizeof(password_buf));
+					SecureZeroMemory(confirm_buf.get(), (password1_len + 1) * sizeof(TCHAR));
+					secure_clear(service->password);
+					service->username.clear();
 					return 6;
 				}
+
+				SecureZeroMemory(password_buf, sizeof(password_buf));
+				SecureZeroMemory(confirm_buf.get(), (password1_len + 1) * sizeof(TCHAR));
 			}
 		}
 	}
@@ -688,31 +637,28 @@ int configure(HWND window, nssm_service_t* service, nssm_service_t* orig_service
 	unsigned long dependencieslen = (unsigned long)SendMessage(GetDlgItem(tablist[NSSM_TAB_DEPENDENCIES], IDC_DEPENDENCIES), WM_GETTEXTLENGTH, 0, 0);
 	if (dependencieslen)
 	{
-		TCHAR* dependencies = (TCHAR*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (dependencieslen + 2) * sizeof(TCHAR));
+		ScopedHeapBuffer<TCHAR> dependencies(dependencieslen + 2);
 		if (!dependencies)
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("dependencies"), _T("install()"));
-			cleanup_nssm_service(service);
 			return 6;
 		}
 
 		if (!GetDlgItemText(tablist[NSSM_TAB_DEPENDENCIES], IDC_DEPENDENCIES, dependencies, dependencieslen + 1))
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_DEPENDENCIES);
-			HeapFree(GetProcessHeap(), 0, dependencies);
-			cleanup_nssm_service(service);
 			return 6;
 		}
 
-		if (unformat_double_null(dependencies, dependencieslen, &service->dependencies, &service->dependencieslen))
+		TCHAR* raw_deps = 0;
+		unsigned long raw_deps_len = 0;
+		if (unformat_double_null(dependencies, dependencieslen, &raw_deps, &raw_deps_len))
 		{
-			HeapFree(GetProcessHeap(), 0, dependencies);
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("dependencies"), _T("install()"));
-			cleanup_nssm_service(service);
 			return 6;
 		}
-
-		HeapFree(GetProcessHeap(), 0, dependencies);
+		service->dependencies.assign(raw_deps, raw_deps + raw_deps_len);
+		HeapFree(GetProcessHeap(), 0, raw_deps);
 	}
 
 	/* Remaining tabs are only for services we manage. */
@@ -793,57 +739,45 @@ int configure(HWND window, nssm_service_t* service, nssm_service_t* orig_service
 	unsigned long envlen = (unsigned long)SendMessage(GetDlgItem(tablist[NSSM_TAB_ENVIRONMENT], IDC_ENVIRONMENT), WM_GETTEXTLENGTH, 0, 0);
 	if (envlen)
 	{
-		TCHAR* env = (TCHAR*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (envlen + 2) * sizeof(TCHAR));
-		if (!env)
+		ScopedHeapBuffer<TCHAR> env_buf(envlen + 2);
+		if (!env_buf)
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("environment"), _T("install()"));
-			cleanup_nssm_service(service);
 			return 5;
 		}
 
-		if (!GetDlgItemText(tablist[NSSM_TAB_ENVIRONMENT], IDC_ENVIRONMENT, env, envlen + 1))
+		if (!GetDlgItemText(tablist[NSSM_TAB_ENVIRONMENT], IDC_ENVIRONMENT, env_buf, envlen + 1))
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_ENVIRONMENT);
-			HeapFree(GetProcessHeap(), 0, env);
-			cleanup_nssm_service(service);
 			return 5;
 		}
 
 		TCHAR* newenv;
 		unsigned long newlen;
-		if (unformat_double_null(env, envlen, &newenv, &newlen))
+		if (unformat_double_null(env_buf, envlen, &newenv, &newlen))
 		{
-			HeapFree(GetProcessHeap(), 0, env);
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("environment"), _T("install()"));
-			cleanup_nssm_service(service);
 			return 5;
 		}
 
-		HeapFree(GetProcessHeap(), 0, env);
-		env = newenv;
-		envlen = newlen;
-
 		/* Test the environment is valid. */
-		if (test_environment(env))
+		if (test_environment(newenv))
 		{
 			popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_INVALID_ENVIRONMENT);
-			HeapFree(GetProcessHeap(), 0, env);
-			cleanup_nssm_service(service);
+			HeapFree(GetProcessHeap(), 0, newenv);
 			return 5;
 		}
 
 		if (SendDlgItemMessage(tablist[NSSM_TAB_ENVIRONMENT], IDC_ENVIRONMENT_REPLACE, BM_GETCHECK, 0, 0) & BST_CHECKED)
 		{
-			service->env = env;
-			service->envlen = envlen;
+			service->env.assign(newenv, newenv + newlen);
 		}
 		else
 		{
-			service->env_extra = env;
-			service->env_extralen = envlen;
+			service->env_extra.assign(newenv, newenv + newlen);
 		}
+		HeapFree(GetProcessHeap(), 0, newenv);
 	}
-
 	return 0;
 }
 
@@ -860,7 +794,11 @@ int install(HWND window)
 	}
 	{
 		int ret = configure(window, service, 0);
-		if (ret) return ret;
+		if (ret)
+		{
+			cleanup_nssm_service(service);
+			return ret;
+		}
 	}
 
 	/* See if it works. */
@@ -973,29 +911,38 @@ int edit(HWND window, nssm_service_t* orig_service)
 	}
 	{
 		int ret = configure(window, service, orig_service);
-		if (ret) return ret;
+		if (ret)
+		{
+			service->handle = 0; /* Borrowed from orig_service; don't close. */
+			cleanup_nssm_service(service);
+			return ret;
+		}
 	}
 
 	switch (edit_service(service, true))
 	{
 	case 1:
 		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("edit()"));
+		service->handle = 0;
 		cleanup_nssm_service(service);
 		return 1;
 
 	case 3:
 		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_MESSAGE_PATH_TOO_LONG, NSSM);
+		service->handle = 0;
 		cleanup_nssm_service(service);
 		return 3;
 
 	case 4:
 		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_OUT_OF_MEMORY_FOR_IMAGEPATH);
+		service->handle = 0;
 		cleanup_nssm_service(service);
 		return 4;
 
 	case 5:
 	case 6:
 		popup_message(window, MB_OK | MB_ICONEXCLAMATION, NSSM_GUI_EDIT_PARAMETERS_FAILED);
+		service->handle = 0;
 		cleanup_nssm_service(service);
 		return 6;
 	}
@@ -1003,6 +950,7 @@ int edit(HWND window, nssm_service_t* orig_service)
 	update_hooks(service->name);
 
 	popup_message(window, MB_OK, NSSM_MESSAGE_SERVICE_EDITED, service->name);
+	service->handle = 0;
 	cleanup_nssm_service(service);
 	return 0;
 }
@@ -1042,7 +990,8 @@ void browse(HWND window, TCHAR* current, unsigned long flags, ...)
 	OPENFILENAME ofn;
 	ZeroMemory(&ofn, sizeof(ofn));
 	ofn.lStructSize = sizeof(ofn);
-	ofn.lpstrFilter = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, bufsize * sizeof(TCHAR));
+	ScopedHeapBuffer<TCHAR> filter_buf(bufsize);
+	ofn.lpstrFilter = filter_buf;
 	/* XXX: Escaping nulls with FormatMessage is tricky */
 	if (ofn.lpstrFilter)
 	{
@@ -1063,7 +1012,8 @@ void browse(HWND window, TCHAR* current, unsigned long flags, ...)
 		va_end(arg);
 		/* Remainder of the buffer is already zeroed */
 	}
-	ofn.lpstrFile = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, PATH_LENGTH * sizeof(TCHAR));
+	ScopedHeapBuffer<TCHAR> file_buf(PATH_LENGTH);
+	ofn.lpstrFile = file_buf;
 	if (ofn.lpstrFile)
 	{
 		if (flags & OFN_NOVALIDATE)
@@ -1087,8 +1037,6 @@ void browse(HWND window, TCHAR* current, unsigned long flags, ...)
 		if (flags & OFN_NOVALIDATE) strip_basename(ofn.lpstrFile);
 		SendMessage(window, WM_SETTEXT, 0, (LPARAM)ofn.lpstrFile);
 	}
-	if (ofn.lpstrFilter) HeapFree(GetProcessHeap(), 0, (void*)ofn.lpstrFilter);
-	if (ofn.lpstrFile) HeapFree(GetProcessHeap(), 0, ofn.lpstrFile);
 }
 
 INT_PTR CALLBACK tab_dlg(HWND tab, UINT message, WPARAM w, LPARAM l)

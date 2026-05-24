@@ -1,6 +1,6 @@
 # NSSM: The Native System Service Manager
 
-**Version 2.26, 2026-05-22** | **Public Domain**
+**Version 3.0, 2026-05-24** | **Public Domain**
 
 NSSM stands for **Native System Service Manager**.
 
@@ -1120,6 +1120,13 @@ Project structure:
   vulnerabilities and resource leaks. DLL loading now uses
   `LOAD_LIBRARY_SEARCH_SYSTEM32` where available. A comprehensive test
   suite (unit + integration) has been added.
+- Since version 3.0, NSSM uses RAII guards (`HandleGuard`, `RegistryKeyGuard`,
+  `ScHandleGuard`, `ScopedHeapBuffer`) to eliminate manual resource cleanup
+  bugs. `tbuffer` (`std::vector<TCHAR>`) replaces raw heap allocations for
+  environment blocks and service dependencies. The `delete` command is
+  accepted as an alias for `remove`, matching `sc.exe` conventions. Several
+  memory leaks and use-after-free bugs in the GUI install/edit flow have
+  been fixed.
 
 ---
 

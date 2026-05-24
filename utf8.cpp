@@ -48,16 +48,13 @@ int to_utf8(const wchar_t* utf16, char** utf8, unsigned long* utf8len)
 	int size = WideCharToMultiByte(CP_UTF8, 0, utf16, -1, NULL, 0, NULL, NULL);
 	if (!size) return 1;
 
-	*utf8 = (char*)HeapAlloc(GetProcessHeap(), 0, size);
-	if (!*utf8) return 2;
+	ScopedHeapBuffer<char> buf(size);
+	if (!buf) return 2;
 
-	if (!WideCharToMultiByte(CP_UTF8, 0, utf16, -1, *utf8, size, NULL, NULL))
-	{
-		HeapFree(GetProcessHeap(), 0, *utf8);
-		*utf8 = 0;
+	if (!WideCharToMultiByte(CP_UTF8, 0, utf16, -1, buf, size, NULL, NULL))
 		return 3;
-	}
 
+	*utf8 = buf.detach();
 	if (utf8len) *utf8len = (unsigned long)strlen(*utf8);
 
 	return 0;
@@ -70,12 +67,13 @@ int to_utf8(const char* ansi, char** utf8, unsigned long* utf8len)
 	size_t len = strlen(ansi);
 	int size = (int)len + 1;
 
-	*utf8 = (char*)HeapAlloc(GetProcessHeap(), 0, size);
-	if (!*utf8) return 2;
+	ScopedHeapBuffer<char> buf(size);
+	if (!buf) return 2;
 
 	if (utf8len) *utf8len = (unsigned long)len;
-	memmove(*utf8, ansi, size);
+	memmove(buf, ansi, size);
 
+	*utf8 = buf.detach();
 	return 0;
 }
 
@@ -86,16 +84,13 @@ int to_utf16(const char* utf8, wchar_t** utf16, unsigned long* utf16len)
 	int size = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
 	if (!size) return 1;
 
-	*utf16 = (wchar_t*)HeapAlloc(GetProcessHeap(), 0, size * sizeof(wchar_t));
-	if (!*utf16) return 2;
+	ScopedHeapBuffer<wchar_t> buf(size);
+	if (!buf) return 2;
 
-	if (!MultiByteToWideChar(CP_UTF8, 0, utf8, -1, *utf16, size))
-	{
-		HeapFree(GetProcessHeap(), 0, *utf16);
-		*utf16 = 0;
+	if (!MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, size))
 		return 3;
-	}
 
+	*utf16 = buf.detach();
 	if (utf16len) *utf16len = (unsigned long)wcslen(*utf16);
 
 	return 0;
@@ -106,14 +101,15 @@ int to_utf16(const wchar_t* unicode, wchar_t** utf16, unsigned long* utf16len)
 	*utf16 = 0;
 	if (utf16len) *utf16len = 0;
 	size_t len = wcslen(unicode);
-	int size = ((int)len + 1) * sizeof(wchar_t);
+	int byte_size = ((int)len + 1) * sizeof(wchar_t);
 
-	*utf16 = (wchar_t*)HeapAlloc(GetProcessHeap(), 0, size);
-	if (!*utf16) return 2;
+	ScopedHeapBuffer<wchar_t> buf(len + 1);
+	if (!buf) return 2;
 
 	if (utf16len) *utf16len = (unsigned long)len;
-	memmove(*utf16, unicode, size);
+	memmove(buf, unicode, byte_size);
 
+	*utf16 = buf.detach();
 	return 0;
 }
 

@@ -86,7 +86,7 @@ static void add_thread_handle(hook_thread_t* hook_threads, HANDLE thread_handle,
 	if (!hook_threads) return;
 
 	int num_threads = hook_threads->num_threads + 1;
-	hook_thread_data_t* data = (hook_thread_data_t*)HeapAlloc(GetProcessHeap(), 0, num_threads * sizeof(hook_thread_data_t));
+	ScopedHeapBuffer<hook_thread_data_t> data(num_threads);
 	if (!data)
 	{
 		log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("hook_thread_t"), _T("add_thread_handle()"), 0);
@@ -99,7 +99,7 @@ static void add_thread_handle(hook_thread_t* hook_threads, HANDLE thread_handle,
 	data[i].thread_handle = thread_handle;
 
 	if (hook_threads->data) HeapFree(GetProcessHeap(), 0, hook_threads->data);
-	hook_threads->data = data;
+	hook_threads->data = data.detach();
 	hook_threads->num_threads = num_threads;
 }
 
@@ -179,7 +179,7 @@ void await_hook_threads(hook_thread_t* hook_threads, SERVICE_STATUS_HANDLE statu
 	if (!hook_threads) return;
 	if (!hook_threads->num_threads) return;
 
-	int* retain = (int*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, hook_threads->num_threads * sizeof(int));
+	ScopedHeapBuffer<int> retain(hook_threads->num_threads);
 	if (!retain)
 	{
 		log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("retain"), _T("await_hook_threads()"), 0);
@@ -213,18 +213,17 @@ void await_hook_threads(hook_thread_t* hook_threads, SERVICE_STATUS_HANDLE statu
 
 	if (num_threads)
 	{
-		hook_thread_data_t* data = (hook_thread_data_t*)HeapAlloc(GetProcessHeap(), 0, num_threads * sizeof(hook_thread_data_t));
+		ScopedHeapBuffer<hook_thread_data_t> data(num_threads);
 		if (!data)
 		{
 			log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("data"), _T("await_hook_threads()"), 0);
-			HeapFree(GetProcessHeap(), 0, retain);
 			return;
 		}
 
 		for (i = 0; i < num_threads; i++) memmove(&data[i], &hook_threads->data[retain[i]], sizeof(data[i]));
 
 		HeapFree(GetProcessHeap(), 0, hook_threads->data);
-		hook_threads->data = data;
+		hook_threads->data = data.detach();
 		hook_threads->num_threads = num_threads;
 	}
 	else
@@ -232,8 +231,6 @@ void await_hook_threads(hook_thread_t* hook_threads, SERVICE_STATUS_HANDLE statu
 		HeapFree(GetProcessHeap(), 0, hook_threads->data);
 		ZeroMemory(hook_threads, sizeof(*hook_threads));
 	}
-
-	HeapFree(GetProcessHeap(), 0, retain);
 }
 
 /*

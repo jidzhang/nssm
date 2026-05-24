@@ -330,7 +330,7 @@ int _tmain(int argc, TCHAR** argv)
 		}
 		if (str_equiv(argv[1], _T("list"))) nssm_exit(list_nssm_services(argc - 2, argv + 2));
 		if (str_equiv(argv[1], _T("processes"))) nssm_exit(service_process_tree(argc - 2, argv + 2));
-		if (str_equiv(argv[1], _T("remove")))
+		if (str_equiv(argv[1], _T("remove")) || str_equiv(argv[1], _T("delete")))
 		{
 			if (!is_admin) nssm_exit(elevate(argc, argv, NSSM_MESSAGE_NOT_ADMINISTRATOR_CANNOT_REMOVE));
 			nssm_exit(pre_remove_service(argc - 2, argv + 2));

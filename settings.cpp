@@ -37,20 +37,20 @@ static int value_from_string(const TCHAR* name, value_t* value, const TCHAR* str
 		return 0;
 	}
 
-	value->string = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(TCHAR));
-	if (!value->string)
+	ScopedHeapBuffer<TCHAR> buf(len);
+	if (!buf)
 	{
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, name, _T("value_from_string()"));
 		return -1;
 	}
 
-	if (_sntprintf_s(value->string, len, _TRUNCATE, _T("%s"), string) < 0)
+	if (_sntprintf_s(buf, len, _TRUNCATE, _T("%s"), string) < 0)
 	{
-		HeapFree(GetProcessHeap(), 0, value->string);
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, name, _T("value_from_string()"));
 		return -1;
 	}
 
+	value->string = buf.detach();
 	return 1;
 }
 
@@ -459,7 +459,6 @@ static int setting_get_affinity(const TCHAR* service_name, void* param, const TC
 	if (!key) return -1;
 
 	unsigned long type;
-	TCHAR* buffer = 0;
 	unsigned long buflen = 0;
 
 	int ret = RegQueryValueEx(key, name, 0, &type, 0, &buflen);
@@ -472,38 +471,35 @@ static int setting_get_affinity(const TCHAR* service_name, void* param, const TC
 
 	if (type != REG_SZ) return -1;
 
-	buffer = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, buflen);
-	if (!buffer)
+	ScopedHeapBuffer<TCHAR> buf(buflen / sizeof(TCHAR));
+	if (!buf)
 	{
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("affinity"), _T("setting_get_affinity"));
 		return -1;
 	}
 
-	if (get_string(key, (TCHAR*)name, buffer, buflen, false, false, true))
+	if (get_string(key, (TCHAR*)name, buf, buflen, false, false, true))
 	{
-		HeapFree(GetProcessHeap(), 0, buffer);
 		return -1;
 	}
 
 	__int64 affinity;
-	if (affinity_string_to_mask(buffer, &affinity))
+	if (affinity_string_to_mask(buf, &affinity))
 	{
-		print_message(stderr, NSSM_MESSAGE_BOGUS_AFFINITY_MASK, buffer, num_cpus() - 1);
-		HeapFree(GetProcessHeap(), 0, buffer);
+		print_message(stderr, NSSM_MESSAGE_BOGUS_AFFINITY_MASK, buf.get(), num_cpus() - 1);
 		return -1;
 	}
-
-	HeapFree(GetProcessHeap(), 0, buffer);
 
 	/* Canonicalise. */
-	if (affinity_mask_to_string(affinity, &buffer))
+	TCHAR* canon = 0;
+	if (affinity_mask_to_string(affinity, &canon))
 	{
-		if (buffer) HeapFree(GetProcessHeap(), 0, buffer);
+		if (canon) HeapFree(GetProcessHeap(), 0, canon);
 		return -1;
 	}
 
-	ret = value_from_string(name, value, buffer);
-	HeapFree(GetProcessHeap(), 0, buffer);
+	ret = value_from_string(name, value, canon);
+	HeapFree(GetProcessHeap(), 0, canon);
 	return ret;
 }
 
@@ -647,16 +643,16 @@ static int setting_dump_environment(const TCHAR* service_name, void* param, cons
 	for (s = env; *s; s++)
 	{
 		size_t len = _tcslen(s) + 2;
-		value->string = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(TCHAR));
-		if (!value->string)
+		ScopedHeapBuffer<TCHAR> buf(len);
+		if (!buf)
 		{
 			print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("dump"), _T("setting_dump_environment"));
 			break;
 		}
 
-		_sntprintf_s(value->string, len, _TRUNCATE, _T("%c%s"), (s > env) ? _T('+') : _T(':'), s);
+		_sntprintf_s(buf, len, _TRUNCATE, _T("%c%s"), (s > env) ? _T('+') : _T(':'), s);
+		value->string = buf;
 		if (setting_dump_string(service_name, (void*)REG_SZ, name, value, 0)) errors++;
-		HeapFree(GetProcessHeap(), 0, value->string);
 		value->string = 0;
 
 		for (; *s; s++);
@@ -832,70 +828,93 @@ static int native_set_dependon(const TCHAR* service_name, SC_HANDLE service_hand
 	return 0;
 }
 
-static int native_set_dependongroup(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
+static int native_set_dependon_type(const TCHAR* service_name, void* param, value_t* value, int target_type, int other_type)
 {
 	SC_HANDLE service_handle = (SC_HANDLE)param;
 	if (!service_handle) return -1;
 
 	/*
-	  Get existing service dependencies because we must set both types together.
+	  Get the other type of dependencies because we must set both types together.
 	*/
-	TCHAR* services_buffer;
-	unsigned long services_buflen;
-	if (get_service_dependencies(service_name, service_handle, &services_buffer, &services_buflen, DEPENDENCY_SERVICES)) return -1;
+	TCHAR* other_buffer;
+	unsigned long other_buflen;
+	if (get_service_dependencies(service_name, service_handle, &other_buffer, &other_buflen, other_type)) return -1;
 
 	if (!value || !value->string || !value->string[0])
 	{
-		if (!ChangeServiceConfig(service_handle, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, 0, 0, 0, services_buffer, 0, 0, 0))
+		if (!ChangeServiceConfig(service_handle, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, 0, 0, 0, other_buffer, 0, 0, 0))
 		{
 			print_message(stderr, NSSM_MESSAGE_CHANGESERVICECONFIG_FAILED, error_string(GetLastError()));
-			if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
+			if (other_buffer) HeapFree(GetProcessHeap(), 0, other_buffer);
 			return -1;
 		}
 
-		if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
+		if (other_buffer) HeapFree(GetProcessHeap(), 0, other_buffer);
 		return 0;
 	}
 
-	/* Update the group list. */
-	TCHAR* groups_buffer;
-	unsigned long groups_buflen;
-	if (native_set_dependon(service_name, service_handle, &groups_buffer, &groups_buflen, value, DEPENDENCY_GROUPS)) return -1;
+	/* Update the target dependency list. */
+	TCHAR* target_buffer;
+	unsigned long target_buflen;
+	if (native_set_dependon(service_name, service_handle, &target_buffer, &target_buflen, value, target_type)) return -1;
+
+	/*
+	  Merge both lists.  The original code always placed services before groups
+	  so we preserve that convention here.
+	*/
+	TCHAR* svc_buf;
+	unsigned long svc_len;
+	TCHAR* grp_buf;
+	unsigned long grp_len;
+	if (target_type == DEPENDENCY_SERVICES)
+	{
+		svc_buf = target_buffer;  svc_len = target_buflen;
+		grp_buf = other_buffer;   grp_len = other_buflen;
+	}
+	else
+	{
+		svc_buf = other_buffer;   svc_len = other_buflen;
+		grp_buf = target_buffer;  grp_len = target_buflen;
+	}
 
 	TCHAR* dependencies;
-	if (services_buflen > 2)
+	ScopedHeapBuffer<TCHAR> merged;
+	if (other_buflen > 2)
 	{
-		dependencies = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (groups_buflen + services_buflen) * sizeof(TCHAR));
-		if (!dependencies)
+		if (!merged.alloc(svc_len + grp_len))
 		{
-			print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("dependencies"), _T("native_set_dependongroup"));
-			if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-			if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
+			if (target_buffer) HeapFree(GetProcessHeap(), 0, target_buffer);
+			if (other_buffer) HeapFree(GetProcessHeap(), 0, other_buffer);
 			return -1;
 		}
 
-		memmove(dependencies, services_buffer, services_buflen * sizeof(TCHAR));
-		memmove(dependencies + services_buflen - 1, groups_buffer, groups_buflen * sizeof(TCHAR));
+		memmove(merged.get(), svc_buf, svc_len * sizeof(TCHAR));
+		memmove(merged.get() + svc_len - 1, grp_buf, grp_len * sizeof(TCHAR));
+		dependencies = merged.get();
 	}
-	else dependencies = groups_buffer;
+	else dependencies = target_buffer;
 
 	int ret = 1;
 	if (set_service_dependencies(service_name, service_handle, dependencies)) ret = -1;
-	if (dependencies != groups_buffer) HeapFree(GetProcessHeap(), 0, dependencies);
-	if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-	if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
+	if (target_buffer) HeapFree(GetProcessHeap(), 0, target_buffer);
+	if (other_buffer) HeapFree(GetProcessHeap(), 0, other_buffer);
 
 	return ret;
 }
 
-static int native_get_dependongroup(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
+static int native_set_dependongroup(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
+{
+	return native_set_dependon_type(service_name, param, value, DEPENDENCY_GROUPS, DEPENDENCY_SERVICES);
+}
+
+static int native_get_dependon(const TCHAR* service_name, void* param, const TCHAR* name, value_t* value, int type)
 {
 	SC_HANDLE service_handle = (SC_HANDLE)param;
 	if (!service_handle) return -1;
 
 	TCHAR* buffer;
 	unsigned long buflen;
-	if (get_service_dependencies(service_name, service_handle, &buffer, &buflen, DEPENDENCY_GROUPS)) return -1;
+	if (get_service_dependencies(service_name, service_handle, &buffer, &buflen, type)) return -1;
 
 	int ret;
 	if (buflen)
@@ -921,6 +940,11 @@ static int native_get_dependongroup(const TCHAR* service_name, void* param, cons
 	return ret;
 }
 
+static int native_get_dependongroup(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
+{
+	return native_get_dependon(service_name, param, name, value, DEPENDENCY_GROUPS);
+}
+
 static int setting_dump_dependon(const TCHAR* service_name, SC_HANDLE service_handle, const TCHAR* name, int type, value_t* value)
 {
 	int errors = 0;
@@ -934,16 +958,16 @@ static int setting_dump_dependon(const TCHAR* service_name, SC_HANDLE service_ha
 	for (s = dependencies; *s; s++)
 	{
 		size_t len = _tcslen(s) + 2;
-		value->string = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(TCHAR));
-		if (!value->string)
+		ScopedHeapBuffer<TCHAR> buf(len);
+		if (!buf)
 		{
 			print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("dump"), _T("setting_dump_dependon"));
 			break;
 		}
 
-		_sntprintf_s(value->string, len, _TRUNCATE, _T("%c%s"), (s > dependencies) ? _T('+') : _T(':'), s);
+		_sntprintf_s(buf, len, _TRUNCATE, _T("%c%s"), (s > dependencies) ? _T('+') : _T(':'), s);
+		value->string = buf;
 		if (setting_dump_string(service_name, (void*)REG_SZ, name, value, 0)) errors++;
-		HeapFree(GetProcessHeap(), 0, value->string);
 		value->string = 0;
 
 		for (; *s; s++);
@@ -962,91 +986,12 @@ static int native_dump_dependongroup(const TCHAR* service_name, void* param, con
 
 static int native_set_dependonservice(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
 {
-	SC_HANDLE service_handle = (SC_HANDLE)param;
-	if (!service_handle) return -1;
-
-	/*
-	  Get existing group dependencies because we must set both types together.
-	*/
-	TCHAR* groups_buffer;
-	unsigned long groups_buflen;
-	if (get_service_dependencies(service_name, service_handle, &groups_buffer, &groups_buflen, DEPENDENCY_GROUPS)) return -1;
-
-	if (!value || !value->string || !value->string[0])
-	{
-		if (!ChangeServiceConfig(service_handle, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, 0, 0, 0, groups_buffer, 0, 0, 0))
-		{
-			print_message(stderr, NSSM_MESSAGE_CHANGESERVICECONFIG_FAILED, error_string(GetLastError()));
-			if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-			return -1;
-		}
-
-		if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-		return 0;
-	}
-
-	/* Update the service list. */
-	TCHAR* services_buffer;
-	unsigned long services_buflen;
-	if (native_set_dependon(service_name, service_handle, &services_buffer, &services_buflen, value, DEPENDENCY_SERVICES)) return -1;
-
-	TCHAR* dependencies;
-	if (groups_buflen > 2)
-	{
-		dependencies = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (services_buflen + groups_buflen) * sizeof(TCHAR));
-		if (!dependencies)
-		{
-			print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("dependencies"), _T("native_set_dependonservice"));
-			if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-			if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
-			return -1;
-		}
-
-		memmove(dependencies, services_buffer, services_buflen * sizeof(TCHAR));
-		memmove(dependencies + services_buflen - 1, groups_buffer, groups_buflen * sizeof(TCHAR));
-	}
-	else dependencies = services_buffer;
-
-	int ret = 1;
-	if (set_service_dependencies(service_name, service_handle, dependencies)) ret = -1;
-	if (dependencies != services_buffer) HeapFree(GetProcessHeap(), 0, dependencies);
-	if (groups_buffer) HeapFree(GetProcessHeap(), 0, groups_buffer);
-	if (services_buffer) HeapFree(GetProcessHeap(), 0, services_buffer);
-
-	return ret;
+	return native_set_dependon_type(service_name, param, value, DEPENDENCY_SERVICES, DEPENDENCY_GROUPS);
 }
 
 static int native_get_dependonservice(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)
 {
-	SC_HANDLE service_handle = (SC_HANDLE)param;
-	if (!service_handle) return -1;
-
-	TCHAR* buffer;
-	unsigned long buflen;
-	if (get_service_dependencies(service_name, service_handle, &buffer, &buflen, DEPENDENCY_SERVICES)) return -1;
-
-	int ret;
-	if (buflen)
-	{
-		TCHAR* formatted;
-		unsigned long newlen;
-		if (format_double_null(buffer, buflen, &formatted, &newlen))
-		{
-			HeapFree(GetProcessHeap(), 0, buffer);
-			return -1;
-		}
-
-		ret = value_from_string(name, value, formatted);
-		HeapFree(GetProcessHeap(), 0, formatted);
-		HeapFree(GetProcessHeap(), 0, buffer);
-	}
-	else
-	{
-		value->string = 0;
-		ret = 0;
-	}
-
-	return ret;
+	return native_get_dependon(service_name, param, name, value, DEPENDENCY_SERVICES);
 }
 
 static int native_dump_dependonservice(const TCHAR* service_name, void* param, const TCHAR* name, void* default_value, value_t* value, const TCHAR* additional)

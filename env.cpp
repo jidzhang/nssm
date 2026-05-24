@@ -77,7 +77,7 @@ TCHAR* expand_environment_string(TCHAR* string)
 		return 0;
 	}
 
-	TCHAR* ret = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(TCHAR));
+	ScopedHeapBuffer<TCHAR> ret(len);
 	if (!ret)
 	{
 		log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("ExpandEnvironmentStrings()"), _T("expand_environment_string"), 0);
@@ -87,11 +87,10 @@ TCHAR* expand_environment_string(TCHAR* string)
 	if (!ExpandEnvironmentStrings(string, ret, len))
 	{
 		log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_EXPANDENVIRONMENTSTRINGS_FAILED, string, error_string(GetLastError()), 0);
-		HeapFree(GetProcessHeap(), 0, ret);
 		return 0;
 	}
 
-	return ret;
+	return ret.detach();
 }
 
 /*
@@ -269,7 +268,6 @@ int remove_from_environment_block(TCHAR* env, unsigned long envlen, TCHAR* strin
 {
 	if (!string || !string[0] || string[0] == _T('=')) return 1;
 
-	TCHAR* key = 0;
 	size_t len = _tcslen(string);
 	size_t i;
 	for (i = 0; i < len; i++) if (string[i] == _T('=')) break;
@@ -278,7 +276,7 @@ int remove_from_environment_block(TCHAR* env, unsigned long envlen, TCHAR* strin
 	size_t keylen = len;
 	if (i == len) keylen++;
 
-	key = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (keylen + 1) * sizeof(TCHAR));
+	ScopedHeapBuffer<TCHAR> key(keylen + 1);
 	if (!key)
 	{
 		log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("key"), _T("remove_from_environment_block()"), 0);
@@ -289,7 +287,6 @@ int remove_from_environment_block(TCHAR* env, unsigned long envlen, TCHAR* strin
 	key[keylen] = _T('\0');
 
 	int ret = remove_from_double_null(env, envlen, newenv, newlen, key, keylen, false);
-	HeapFree(GetProcessHeap(), 0, key);
 
 	return ret;
 }

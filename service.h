@@ -1,6 +1,13 @@
 #ifndef SERVICE_H
 #define SERVICE_H
 
+#include <string>
+#include <vector>
+
+/* TCHAR-compatible string and buffer types. */
+typedef std::basic_string<TCHAR> tstring;
+typedef std::vector<TCHAR> tbuffer;
+
 /*
   MSDN says the commandline in CreateProcess() is limited to 32768 characters
   and the application name to MAX_PATH.
@@ -36,22 +43,17 @@ typedef struct
 	TCHAR displayname[SERVICE_NAME_LENGTH];
 	TCHAR description[VALUE_LENGTH];
 	unsigned long startup;
-	TCHAR* username;
-	size_t usernamelen;
-	TCHAR* password;
-	size_t passwordlen;
+	tstring username;
+	tstring password;
 	unsigned long type;
 	TCHAR image[PATH_LENGTH];
 	TCHAR exe[EXE_LENGTH];
 	TCHAR flags[VALUE_LENGTH];
 	TCHAR dir[DIR_LENGTH];
-	TCHAR* env;
+	tbuffer env;
 	__int64 affinity;
-	TCHAR* dependencies;
-	unsigned long dependencieslen;
-	unsigned long envlen;
-	TCHAR* env_extra;
-	unsigned long env_extralen;
+	tbuffer dependencies;
+	tbuffer env_extra;
 	unsigned long priority;
 	unsigned long no_console;
 	TCHAR stdin_path[PATH_LENGTH];
@@ -115,7 +117,7 @@ typedef struct
 	FILETIME nssm_creation_time;
 	FILETIME creation_time;
 	FILETIME exit_time;
-	TCHAR* initial_env;
+	tbuffer initial_env;
 	unsigned long last_control;
 	unsigned long start_requested_count;
 	unsigned long start_count;
@@ -145,10 +147,11 @@ int remove_from_dependencies(TCHAR*, unsigned long, TCHAR*, TCHAR**, unsigned lo
 int set_service_dependencies(const TCHAR*, SC_HANDLE, TCHAR*);
 int get_service_dependencies(const TCHAR*, SC_HANDLE, TCHAR**, unsigned long*, int);
 int get_service_dependencies(const TCHAR*, SC_HANDLE, TCHAR**, unsigned long*);
+int get_service_dependencies(const TCHAR*, SC_HANDLE, tbuffer&);
 int set_service_description(const TCHAR*, SC_HANDLE, TCHAR*);
 int get_service_description(const TCHAR*, SC_HANDLE, unsigned long, TCHAR*);
 int get_service_startup(const TCHAR*, SC_HANDLE, const QUERY_SERVICE_CONFIG*, unsigned long*);
-int get_service_username(const TCHAR*, const QUERY_SERVICE_CONFIG*, TCHAR**, size_t*);
+int get_service_username(const TCHAR*, const QUERY_SERVICE_CONFIG*, std::wstring&);
 void set_service_environment(nssm_service_t*);
 void unset_service_environment(nssm_service_t*);
 int pre_install_service(int, TCHAR**);

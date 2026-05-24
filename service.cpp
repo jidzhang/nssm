@@ -18,9 +18,24 @@ typedef struct
 	int last;
 } list_t;
 
+/* Check if path contains an environment variable reference (%...%). */
+static bool has_env_var(const TCHAR* s)
+{
+	const TCHAR* p = _tcschr(s, _T('%'));
+	while (p)
+	{
+		p++;
+		const TCHAR* end = _tcschr(p, _T('%'));
+		if (end && end > p) return true;
+		if (!end) break;
+		p = end + 1;
+	}
+	return false;
+}
+
 void resolve_path(const TCHAR* path, TCHAR* buffer, size_t buflen)
 {
-	if (!path || _tcschr(path, _T('%')))
+	if (!path || has_env_var(path))
 	{
 		if (path) _tcsncpy_s(buffer, buflen, path, _TRUNCATE);
 		else buffer[0] = _T('\0');
@@ -340,9 +355,9 @@ void set_service_environment(nssm_service_t* service)
 	  We have to duplicate the block because this function will be called
 	  multiple times between registry reads.
 	*/
-	if (service->env) duplicate_environment_strings(service->env);
-	if (!service->env_extra) return;
-	TCHAR* env_extra = copy_environment_block(service->env_extra);
+	if (!service->env.empty()) duplicate_environment_strings(&service->env[0]);
+	if (service->env_extra.empty()) return;
+	TCHAR* env_extra = copy_environment_block(&service->env_extra[0]);
 	if (!env_extra) return;
 
 	set_environment_block(env_extra);
@@ -352,7 +367,7 @@ void set_service_environment(nssm_service_t* service)
 void unset_service_environment(nssm_service_t* service)
 {
 	if (!service) return;
-	duplicate_environment_strings(service->initial_env);
+	if (!service->initial_env.empty()) duplicate_environment_strings(&service->initial_env[0]);
 }
 
 /*
@@ -576,7 +591,7 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 
 	if (buffer && buffer[0])
 	{
-		SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+		ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
 		if (!services)
 		{
 			print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -599,13 +614,14 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 		/* At least one dependency is a group so we need to verify them. */
 		if (groups)
 		{
-			HKEY key;
-			if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, NSSM_REGISTRY_GROUPS, 0, KEY_READ, &key))
+			RegistryKeyGuard key;
+			HKEY raw_key;
+			if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, NSSM_REGISTRY_GROUPS, 0, KEY_READ, &raw_key))
 			{
 				_ftprintf(stderr, _T("%s: %s\n"), NSSM_REGISTRY_GROUPS, error_string(GetLastError()));
-				CloseServiceHandle(services);
 				return 2;
 			}
+			key.reset(raw_key);
 
 			unsigned long type;
 			unsigned long groupslen;
@@ -616,8 +632,6 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 				if (!groups)
 				{
 					print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("groups"), _T("set_service_dependencies()"));
-					RegCloseKey(key);
-					CloseServiceHandle(services);
 					return 3;
 				}
 
@@ -626,20 +640,14 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 				{
 					_ftprintf(stderr, _T("%s\\%s: %s"), NSSM_REGISTRY_GROUPS, NSSM_REG_GROUPS, error_string(GetLastError()));
 					HeapFree(GetProcessHeap(), 0, groups);
-					RegCloseKey(key);
-					CloseServiceHandle(services);
 					return 4;
 				}
 			}
 			else if (ret != ERROR_FILE_NOT_FOUND)
 			{
 				_ftprintf(stderr, _T("%s\\%s: %s"), NSSM_REGISTRY_GROUPS, NSSM_REG_GROUPS, error_string(GetLastError()));
-				RegCloseKey(key);
-				CloseServiceHandle(services);
 				return 4;
 			}
-
-			RegCloseKey(key);
 		}
 
 		unsigned long dependencieslen = (num_dependencies * SERVICE_NAME_LENGTH) + 2;
@@ -676,19 +684,17 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 				{
 					HeapFree(GetProcessHeap(), 0, dependencies);
 					if (groups) HeapFree(GetProcessHeap(), 0, groups);
-					CloseServiceHandle(services);
 					_ftprintf(stderr, _T("%s: %s"), s, error_string(ERROR_SERVICE_DEPENDENCY_DELETED));
 					return 5;
 				}
 			}
 			else
 			{
-				SC_HANDLE dependency_handle = open_service(services, s, SERVICE_QUERY_STATUS, dependency, _countof(dependency));
+				ScHandleGuard dependency_handle(open_service(services, s, SERVICE_QUERY_STATUS, dependency, _countof(dependency)));
 				if (!dependency_handle)
 				{
 					HeapFree(GetProcessHeap(), 0, dependencies);
 					if (groups) HeapFree(GetProcessHeap(), 0, groups);
-					CloseServiceHandle(services);
 					_ftprintf(stderr, _T("%s: %s"), s, error_string(ERROR_SERVICE_DEPENDENCY_DELETED));
 					return 5;
 				}
@@ -702,7 +708,6 @@ int set_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 		}
 
 		if (groups) HeapFree(GetProcessHeap(), 0, groups);
-		CloseServiceHandle(services);
 	}
 
 	if (!ChangeServiceConfig(service_handle, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE, 0, 0, 0, dependencies, 0, 0, 0))
@@ -788,6 +793,28 @@ int get_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle
 int get_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle, TCHAR** buffer, unsigned long* bufsize)
 {
 	return get_service_dependencies(service_name, service_handle, buffer, bufsize, DEPENDENCY_ALL);
+}
+
+int get_service_dependencies(const TCHAR* service_name, SC_HANDLE service_handle, tbuffer& dependencies)
+{
+	TCHAR* buffer = 0;
+	unsigned long bufsize = 0;
+	int ret = get_service_dependencies(service_name, service_handle, &buffer, &bufsize, DEPENDENCY_ALL);
+	if (ret)
+	{
+		dependencies.clear();
+		return ret;
+	}
+
+	if (buffer)
+	{
+		/* buffer is double-null terminated; bufsize includes both trailing NULs. */
+		dependencies.assign(buffer, buffer + bufsize);
+		HeapFree(GetProcessHeap(), 0, buffer);
+	}
+	else dependencies.clear();
+
+	return 0;
 }
 
 int set_service_description(const TCHAR* service_name, SC_HANDLE service_handle, TCHAR* buffer)
@@ -896,13 +923,9 @@ int get_service_startup(const TCHAR* service_name, SC_HANDLE service_handle, con
 	return 0;
 }
 
-int get_service_username(const TCHAR* service_name, const QUERY_SERVICE_CONFIG* qsc, TCHAR** username, size_t* usernamelen)
+int get_service_username(const TCHAR* service_name, const QUERY_SERVICE_CONFIG* qsc, std::wstring& username)
 {
-	if (!username) return 1;
-	if (!usernamelen) return 1;
-
-	*username = 0;
-	*usernamelen = 0;
+	username.clear();
 
 	if (!qsc) return 1;
 
@@ -910,16 +933,7 @@ int get_service_username(const TCHAR* service_name, const QUERY_SERVICE_CONFIG* 
 	{
 		if (is_localsystem(qsc->lpServiceStartName)) return 0;
 
-		size_t len = _tcslen(qsc->lpServiceStartName);
-		*username = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(TCHAR));
-		if (!*username)
-		{
-			print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("username"), _T("get_service_username()"));
-			return 2;
-		}
-
-		memmove(*username, qsc->lpServiceStartName, (len + 1) * sizeof(TCHAR));
-		*usernamelen = len;
+		username = qsc->lpServiceStartName;
 	}
 
 	return 0;
@@ -952,7 +966,7 @@ void set_nssm_service_defaults(nssm_service_t* service)
 /* Allocate and zero memory for a service. */
 nssm_service_t* alloc_nssm_service()
 {
-	nssm_service_t* service = (nssm_service_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(nssm_service_t));
+	nssm_service_t* service = new nssm_service_t();
 	if (!service) log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("alloc_nssm_service()"), 0);
 	return service;
 }
@@ -961,23 +975,14 @@ nssm_service_t* alloc_nssm_service()
 void cleanup_nssm_service(nssm_service_t* service)
 {
 	if (!service) return;
-	if (service->username) HeapFree(GetProcessHeap(), 0, service->username);
-	if (service->password)
-	{
-		SecureZeroMemory(service->password, service->passwordlen * sizeof(TCHAR));
-		HeapFree(GetProcessHeap(), 0, service->password);
-	}
-	if (service->dependencies) HeapFree(GetProcessHeap(), 0, service->dependencies);
-	if (service->env) HeapFree(GetProcessHeap(), 0, service->env);
-	if (service->env_extra) HeapFree(GetProcessHeap(), 0, service->env_extra);
+	secure_clear(service->password);
 	if (service->handle) CloseServiceHandle(service->handle);
 	if (service->process_handle) CloseHandle(service->process_handle);
 	if (service->wait_handle) UnregisterWait(service->wait_handle);
 	if (service->throttle_section_initialised) DeleteCriticalSection(&service->throttle_section);
 	if (service->throttle_timer) CloseHandle(service->throttle_timer);
 	if (service->hook_section_initialised) DeleteCriticalSection(&service->hook_section);
-	if (service->initial_env) HeapFree(GetProcessHeap(), 0, service->initial_env);
-	HeapFree(GetProcessHeap(), 0, service);
+	delete service;
 }
 
 /* About to install the service */
@@ -1137,7 +1142,7 @@ int pre_edit_service(int argc, TCHAR** argv)
 	_sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), service_name);
 
 	/* Open service manager */
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -1150,7 +1155,6 @@ int pre_edit_service(int argc, TCHAR** argv)
 	service->handle = open_service(services, service->name, access, service->name, _countof(service->name));
 	if (!service->handle)
 	{
-		CloseServiceHandle(services);
 		return 3;
 	}
 
@@ -1159,7 +1163,6 @@ int pre_edit_service(int argc, TCHAR** argv)
 	if (!qsc)
 	{
 		CloseServiceHandle(service->handle);
-		CloseServiceHandle(services);
 		return 4;
 	}
 
@@ -1170,7 +1173,6 @@ int pre_edit_service(int argc, TCHAR** argv)
 		{
 			HeapFree(GetProcessHeap(), 0, qsc);
 			CloseServiceHandle(service->handle);
-			CloseServiceHandle(services);
 			print_message(stderr, NSSM_MESSAGE_CANNOT_EDIT, service->name, NSSM_WIN32_OWN_PROCESS, 0);
 			return 3;
 		}
@@ -1182,18 +1184,16 @@ int pre_edit_service(int argc, TCHAR** argv)
 		{
 			HeapFree(GetProcessHeap(), 0, qsc);
 			CloseServiceHandle(service->handle);
-			CloseServiceHandle(services);
 			return 4;
 		}
 	}
 
-	if (get_service_username(service->name, qsc, &service->username, &service->usernamelen))
+	if (get_service_username(service->name, qsc, service->username))
 	{
 		if (mode != MODE_GETTING && mode != MODE_DUMPING)
 		{
 			HeapFree(GetProcessHeap(), 0, qsc);
 			CloseServiceHandle(service->handle);
-			CloseServiceHandle(services);
 			return 5;
 		}
 	}
@@ -1214,25 +1214,21 @@ int pre_edit_service(int argc, TCHAR** argv)
 		if (mode != MODE_GETTING && mode != MODE_DUMPING)
 		{
 			CloseServiceHandle(service->handle);
-			CloseServiceHandle(services);
 			return 6;
 		}
 	}
 
-	if (get_service_dependencies(service->name, service->handle, &service->dependencies, &service->dependencieslen))
+	if (get_service_dependencies(service->name, service->handle, service->dependencies))
 	{
 		if (mode != MODE_GETTING && mode != MODE_DUMPING)
 		{
 			CloseServiceHandle(service->handle);
-			CloseServiceHandle(services);
 			return 7;
 		}
 	}
 
 	/* Get NSSM details. */
 	get_parameters(service, 0);
-
-	CloseServiceHandle(services);
 
 	if (!service->exe[0])
 	{
@@ -1247,7 +1243,7 @@ int pre_edit_service(int argc, TCHAR** argv)
 		return 0;
 	}
 
-	HKEY key;
+	RegistryKeyGuard key;
 	value_t value;
 	int ret;
 
@@ -1255,15 +1251,15 @@ int pre_edit_service(int argc, TCHAR** argv)
 	{
 		TCHAR* service_name = service->name;
 		if (argc > remainder) service_name = argv[remainder];
-		if (service->native) key = 0;
-		else
+		if (!service->native)
 		{
-			key = open_registry(service->name, KEY_READ);
-			if (!key)
+			HKEY raw_key = open_registry(service->name, KEY_READ);
+			if (!raw_key)
 			{
 				CloseServiceHandle(service->handle);
 				return 4;
 			}
+			key.reset(raw_key);
 		}
 
 		TCHAR quoted_service_name[SERVICE_NAME_LENGTH * 2];
@@ -1294,7 +1290,6 @@ int pre_edit_service(int argc, TCHAR** argv)
 			if (dump_setting(service_name, key, service->handle, setting)) ret++;
 		}
 
-		if (!service->native) RegCloseKey(key);
 		CloseServiceHandle(service->handle);
 
 		if (ret) return 1;
@@ -1313,12 +1308,13 @@ int pre_edit_service(int argc, TCHAR** argv)
 	{
 		if (!service->native)
 		{
-			key = open_registry(service->name, KEY_READ);
-			if (!key)
+			HKEY raw_key = open_registry(service->name, KEY_READ);
+			if (!raw_key)
 			{
 				CloseServiceHandle(service->handle);
 				return 4;
 			}
+			key.reset(raw_key);
 		}
 
 		if (setting->native) ret = get_setting(service->name, service->handle, setting, &value, additional);
@@ -1343,7 +1339,6 @@ int pre_edit_service(int argc, TCHAR** argv)
 			break;
 		}
 
-		if (!service->native) RegCloseKey(key);
 		CloseServiceHandle(service->handle);
 		return 0;
 	}
@@ -1395,13 +1390,14 @@ int pre_edit_service(int argc, TCHAR** argv)
 
 	if (!service->native)
 	{
-		key = open_registry(service->name, KEY_READ | KEY_WRITE);
-		if (!key)
+		HKEY raw_key = open_registry(service->name, KEY_READ | KEY_WRITE);
+		if (!raw_key)
 		{
 			if (value.string) HeapFree(GetProcessHeap(), 0, value.string);
 			CloseServiceHandle(service->handle);
 			return 4;
 		}
+		key.reset(raw_key);
 	}
 
 	if (setting->native) ret = set_setting(service->name, service->handle, setting, &value, additional);
@@ -1409,12 +1405,10 @@ int pre_edit_service(int argc, TCHAR** argv)
 	if (value.string) HeapFree(GetProcessHeap(), 0, value.string);
 	if (ret < 0)
 	{
-		if (!service->native) RegCloseKey(key);
 		CloseServiceHandle(service->handle);
 		return 6;
 	}
 
-	if (!service->native) RegCloseKey(key);
 	CloseServiceHandle(service->handle);
 
 	return 0;
@@ -1450,7 +1444,7 @@ int install_service(nssm_service_t* service)
 	if (!service) return 1;
 
 	/* Open service manager */
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -1466,21 +1460,16 @@ int install_service(nssm_service_t* service)
 	if (!service->handle)
 	{
 		print_message(stderr, NSSM_MESSAGE_CREATESERVICE_FAILED, error_string(GetLastError()));
-		CloseServiceHandle(services);
 		return 5;
 	}
 
 	if (edit_service(service, false))
 	{
 		DeleteService(service->handle);
-		CloseServiceHandle(services);
 		return 6;
 	}
 
 	print_message(stdout, NSSM_MESSAGE_SERVICE_INSTALLED, service->name);
-
-	/* Cleanup */
-	CloseServiceHandle(services);
 
 	return 0;
 }
@@ -1515,31 +1504,32 @@ int edit_service(nssm_service_t* service, bool editing)
 	  Password must be NULL if we aren't changing, a password or "".
 	  Empty passwords are valid but we won't allow them in the GUI.
 	*/
-	TCHAR* username = 0;
+	const TCHAR* username = 0;
 	TCHAR* canon = 0;
-	TCHAR* password = 0;
+	const TCHAR* password = 0;
 	boolean virtual_account = false;
-	if (service->usernamelen)
+	if (!service->username.empty())
 	{
-		username = service->username;
+		username = service->username.c_str();
 		if (is_virtual_account(service->name, username))
 		{
 			virtual_account = true;
-			canon = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (service->usernamelen + 1) * sizeof(TCHAR));
+			size_t usernamelen = service->username.size();
+			canon = (TCHAR*)HeapAlloc(GetProcessHeap(), 0, (usernamelen + 1) * sizeof(TCHAR));
 			if (!canon)
 			{
 				print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("canon"), _T("edit_service()"));
 				return 5;
 			}
-			memmove(canon, username, (service->usernamelen + 1) * sizeof(TCHAR));
+			memmove(canon, username, (usernamelen + 1) * sizeof(TCHAR));
 		}
 		else
 		{
 			if (canonicalise_username(username, &canon)) return 5;
-			if (service->passwordlen) password = service->password;
+			if (!service->password.empty()) password = service->password.c_str();
 		}
 	}
-	else if (editing) username = canon = NSSM_LOCALSYSTEM_ACCOUNT;
+	else if (editing) username = canon = (TCHAR*)NSSM_LOCALSYSTEM_ACCOUNT;
 
 	if (!virtual_account)
 	{
@@ -1556,7 +1546,7 @@ int edit_service(nssm_service_t* service, bool editing)
 	}
 
 	TCHAR* dependencies = _T("");
-	if (service->dependencieslen) dependencies = 0; /* Change later. */
+	if (!service->dependencies.empty()) dependencies = 0; /* Change later. */
 
 	if (!ChangeServiceConfig(service->handle, service->type, startup, SERVICE_NO_CHANGE, 0, 0, 0, dependencies, canon, password, service->displayname))
 	{
@@ -1566,9 +1556,9 @@ int edit_service(nssm_service_t* service, bool editing)
 	}
 	if (canon != username) HeapFree(GetProcessHeap(), 0, canon);
 
-	if (service->dependencieslen)
+	if (!service->dependencies.empty())
 	{
-		if (set_service_dependencies(service->name, service->handle, service->dependencies)) return 5;
+		if (set_service_dependencies(service->name, service->handle, &service->dependencies[0])) return 5;
 	}
 
 	if (service->description[0] || editing)
@@ -1614,7 +1604,7 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 	TCHAR* service_name = argv[0];
 	TCHAR canonical_name[SERVICE_NAME_LENGTH];
 
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -1643,10 +1633,9 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		break;
 	}
 
-	SC_HANDLE service_handle = open_service(services, service_name, access, canonical_name, _countof(canonical_name));
+	ScHandleGuard service_handle(open_service(services, service_name, access, canonical_name, _countof(canonical_name)));
 	if (!service_handle)
 	{
-		CloseServiceHandle(services);
 		if (return_status) return 0;
 		return 3;
 	}
@@ -1659,7 +1648,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		unsigned long initial_status = SERVICE_STOPPED;
 		ret = StartService(service_handle, (unsigned long)argc, (const TCHAR**)argv);
 		error = GetLastError();
-		CloseServiceHandle(services);
 
 		if (error == ERROR_IO_PENDING)
 		{
@@ -1677,15 +1665,13 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 			unsigned long cutoff = 0;
 
 			/* If we manage the service, respect the throttle time. */
-			HKEY key = open_registry(service_name, 0, KEY_READ, false);
+			RegistryKeyGuard key(open_registry(service_name, 0, KEY_READ, false));
 			if (key)
 			{
 				if (get_number(key, NSSM_REG_THROTTLE, &cutoff, false) != 1) cutoff = NSSM_RESET_THROTTLE_RESTART;
-				RegCloseKey(key);
 			}
 
 			int response = await_service_control_response(control, service_handle, &service_status, initial_status, cutoff);
-			CloseServiceHandle(service_handle);
 
 			if (response)
 			{
@@ -1698,7 +1684,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		}
 		else
 		{
-			CloseServiceHandle(service_handle);
 			_ftprintf(stderr, _T("%s: %s: %s"), canonical_name, service_control_text(control), error_string(error));
 			if (return_status) return 0;
 			return 1;
@@ -1713,8 +1698,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		*/
 		ret = QueryServiceStatus(service_handle, &service_status);
 		error = GetLastError();
-		CloseServiceHandle(service_handle);
-		CloseServiceHandle(services);
 
 		if (ret)
 		{
@@ -1734,7 +1717,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		ret = ControlService(service_handle, control, &service_status);
 		unsigned long initial_status = service_status.dwCurrentState;
 		error = GetLastError();
-		CloseServiceHandle(services);
 
 		if (error == ERROR_IO_PENDING)
 		{
@@ -1745,7 +1727,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		if (ret)
 		{
 			int response = await_service_control_response(control, service_handle, &service_status, initial_status);
-			CloseServiceHandle(service_handle);
 
 			if (response)
 			{
@@ -1759,7 +1740,6 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 		}
 		else
 		{
-			CloseServiceHandle(service_handle);
 			_ftprintf(stderr, _T("%s: %s: %s"), canonical_name, service_control_text(control), error_string(error));
 			if (error == ERROR_SERVICE_NOT_ACTIVE)
 			{
@@ -1786,7 +1766,7 @@ int remove_service(nssm_service_t* service)
 	if (!service) return 1;
 
 	/* Open service manager */
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -1797,7 +1777,6 @@ int remove_service(nssm_service_t* service)
 	service->handle = open_service(services, service->name, DELETE, service->name, _countof(service->name));
 	if (!service->handle)
 	{
-		CloseServiceHandle(services);
 		return 3;
 	}
 
@@ -1811,12 +1790,8 @@ int remove_service(nssm_service_t* service)
 	if (!DeleteService(service->handle))
 	{
 		print_message(stderr, NSSM_MESSAGE_DELETESERVICE_FAILED);
-		CloseServiceHandle(services);
 		return 4;
 	}
-
-	/* Cleanup */
-	CloseServiceHandle(services);
 
 	print_message(stdout, NSSM_MESSAGE_SERVICE_REMOVED, service->name);
 	return 0;
@@ -1873,7 +1848,7 @@ void WINAPI service_main(unsigned long argc, TCHAR** argv)
 		/* Try to create the exit action parameters; we don't care if it fails */
 		create_exit_action(service->name, exit_action_strings[0], false);
 
-		SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT);
+		ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT));
 		if (services)
 		{
 			service->handle = open_service(services, service->name, SERVICE_CHANGE_CONFIG, 0, 0);
@@ -1882,8 +1857,6 @@ void WINAPI service_main(unsigned long argc, TCHAR** argv)
 			/* Remember our display name. */
 			unsigned long displayname_len = _countof(service->displayname);
 			GetServiceDisplayName(services, service->name, service->displayname, &displayname_len);
-
-			CloseServiceHandle(services);
 		}
 	}
 
@@ -1907,7 +1880,17 @@ void WINAPI service_main(unsigned long argc, TCHAR** argv)
 	service->hook_section_initialised = true;
 
 	/* Remember our initial environment. */
-	service->initial_env = copy_environment();
+	{
+		TCHAR* raw_env = copy_environment();
+		if (raw_env)
+		{
+			size_t len = 0;
+			while (raw_env[len]) { while (raw_env[len]) len++; len++; }
+			len++; /* Final trailing NUL. */
+			service->initial_env.assign(raw_env, raw_env + len);
+			HeapFree(GetProcessHeap(), 0, raw_env);
+		}
+	}
 
 	/* Remember our creation time. */
 	if (get_process_creation_time(GetCurrentProcess(), &service->nssm_creation_time)) ZeroMemory(&service->nssm_creation_time, sizeof(service->nssm_creation_time));
@@ -2615,7 +2598,7 @@ int list_nssm_services(int argc, TCHAR** argv)
 	bool including_native = (argc > 0 && str_equiv(argv[0], _T("all")));
 
 	/* Open service manager. */
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -2629,7 +2612,6 @@ int list_nssm_services(int argc, TCHAR** argv)
 	if (error != ERROR_MORE_DATA)
 	{
 		print_message(stderr, NSSM_MESSAGE_ENUMSERVICESSTATUS_FAILED, error_string(GetLastError()));
-		CloseServiceHandle(services);
 		return 2;
 	}
 
@@ -2637,7 +2619,6 @@ int list_nssm_services(int argc, TCHAR** argv)
 	if (!status)
 	{
 		print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("ENUM_SERVICE_STATUS_PROCESS"), _T("list_nssm_services()"));
-		CloseServiceHandle(services);
 		return 3;
 	}
 
@@ -2652,7 +2633,6 @@ int list_nssm_services(int argc, TCHAR** argv)
 			{
 				HeapFree(GetProcessHeap(), 0, status);
 				print_message(stderr, NSSM_MESSAGE_ENUMSERVICESSTATUS_FAILED, error_string(GetLastError()));
-				CloseServiceHandle(services);
 				return 4;
 			}
 		}
@@ -2665,7 +2645,6 @@ int list_nssm_services(int argc, TCHAR** argv)
 			{
 				HeapFree(GetProcessHeap(), 0, status);
 				print_message(stderr, NSSM_MESSAGE_OUT_OF_MEMORY, _T("nssm_service_t"), _T("list_nssm_services()"));
-				CloseServiceHandle(services);
 				return 5;
 			}
 			_sntprintf_s(service->name, _countof(service->name), _TRUNCATE, _T("%s"), status[i].lpServiceName);
@@ -2689,7 +2668,7 @@ int service_process_tree(int argc, TCHAR** argv)
 	int errors = 0;
 	if (argc < 1) return usage(1);
 
-	SC_HANDLE services = open_service_manager(SC_MANAGER_CONNECT);
+	ScHandleGuard services(open_service_manager(SC_MANAGER_CONNECT));
 	if (!services)
 	{
 		print_message(stderr, NSSM_MESSAGE_OPEN_SERVICE_MANAGER_FAILED);
@@ -2701,7 +2680,7 @@ int service_process_tree(int argc, TCHAR** argv)
 	  We ignore failure here so that an error will be printed later when we
 	  try to open a process handle.
 	*/
-	HANDLE token = get_debug_token();
+	HandleGuard token(get_debug_token());
 
 	TCHAR canonical_name[SERVICE_NAME_LENGTH];
 	SERVICE_STATUS_PROCESS service_status;
@@ -2712,7 +2691,7 @@ int service_process_tree(int argc, TCHAR** argv)
 	for (i = 0; i < argc; i++)
 	{
 		TCHAR* service_name = argv[i];
-		SC_HANDLE service_handle = open_service(services, service_name, SERVICE_QUERY_STATUS, canonical_name, _countof(canonical_name));
+		ScHandleGuard service_handle(open_service(services, service_name, SERVICE_QUERY_STATUS, canonical_name, _countof(canonical_name)));
 		if (!service_handle)
 		{
 			errors++;
@@ -2722,7 +2701,6 @@ int service_process_tree(int argc, TCHAR** argv)
 		unsigned long size;
 		int ret = QueryServiceStatusEx(service_handle, SC_STATUS_PROCESS_INFO, (LPBYTE)&service_status, sizeof(service_status), &size);
 		long error = GetLastError();
-		CloseServiceHandle(service_handle);
 		if (!ret)
 		{
 			_ftprintf(stderr, _T("%s: %s\n"), canonical_name, error_string(error));
@@ -2741,13 +2719,18 @@ int service_process_tree(int argc, TCHAR** argv)
 			continue;
 		}
 
-		if (get_process_creation_time(k.process_handle, &k.creation_time)) continue;
+		if (get_process_creation_time(k.process_handle, &k.creation_time))
+		{
+			CloseHandle(k.process_handle);
+			continue;
+		}
 		/* Dummy exit time so we can check processes' parents. */
 		GetSystemTimeAsFileTime(&k.exit_time);
 
 		service = alloc_nssm_service();
 		if (!service)
 		{
+			CloseHandle(k.process_handle);
 			errors++;
 			continue;
 		}
@@ -2756,11 +2739,9 @@ int service_process_tree(int argc, TCHAR** argv)
 		k.name = service->name;
 		walk_process_tree(service, print_process, &k, k.pid);
 
+		CloseHandle(k.process_handle);
 		cleanup_nssm_service(service);
 	}
-
-	CloseServiceHandle(services);
-	if (token != INVALID_HANDLE_VALUE) CloseHandle(token);
 
 	return errors;
 }

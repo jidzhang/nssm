@@ -71,7 +71,13 @@
     <ClInclude Include="event.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="guards.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="gui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="heap_ptr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="hook.h">
