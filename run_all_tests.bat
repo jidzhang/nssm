@@ -1,6 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
+cd /d "%~dp0"
+
 echo ============================================
 echo   NSSM - Run All Tests
 echo ============================================
@@ -27,15 +29,12 @@ set ERRORS=0
 
 echo.
 echo [1/3] Building unit tests...
-pushd tests
-call build_test.bat
+call tests\build_test.bat
 if errorlevel 1 (
     echo [FAILED] Unit test build
     set /a ERRORS+=1
-    popd
     goto :inttest
 )
-popd
 
 echo.
 echo [2/3] Running unit tests...
@@ -50,7 +49,7 @@ if errorlevel 1 (
 :inttest
 echo.
 echo [3/3] Running integration tests...
-powershell -ExecutionPolicy Bypass -Command "& '.\tests\integration\run_tests.ps1'"
+powershell -ExecutionPolicy Bypass -File "%~dp0tests\integration\run_tests.ps1"
 if errorlevel 1 (
     set /a ERRORS+=1
 )
