@@ -128,8 +128,7 @@ static inline int await_service_control_response(unsigned long control, SC_HANDL
 		int response = service_control_response(control, service_status->dwCurrentState);
 		/* Alas we can't WaitForSingleObject() on an SC_HANDLE. */
 		if (!response) return response;
-		if (response < 0) return response;
-		if (service_status->dwCurrentState == initial_status)
+		if (response > 0 || service_status->dwCurrentState == initial_status)
 		{
 			if (service_status->dwCheckPoint != checkpoint || service_status->dwWaitHint != waithint) tries = 0;
 			checkpoint = service_status->dwCheckPoint;
@@ -967,8 +966,18 @@ void set_nssm_service_defaults(nssm_service_t* service)
 /* Allocate and zero memory for a service. */
 nssm_service_t* alloc_nssm_service()
 {
-	nssm_service_t* service = new nssm_service_t();
+	nssm_service_t* service = (nssm_service_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(nssm_service_t));
 	if (!service) log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_OUT_OF_MEMORY, _T("service"), _T("alloc_nssm_service()"), 0);
+	/* Zero-init POD members; construct C++ members. */
+	if (service)
+	{
+		new (&service->username) tstring();
+		new (&service->password) tstring();
+		new (&service->env) tbuffer();
+		new (&service->dependencies) tbuffer();
+		new (&service->env_extra) tbuffer();
+		new (&service->initial_env) tbuffer();
+	}
 	return service;
 }
 
@@ -983,7 +992,14 @@ void cleanup_nssm_service(nssm_service_t* service)
 	if (service->throttle_section_initialised) DeleteCriticalSection(&service->throttle_section);
 	if (service->throttle_timer) CloseHandle(service->throttle_timer);
 	if (service->hook_section_initialised) DeleteCriticalSection(&service->hook_section);
-	delete service;
+	/* Destroy C++ members before freeing heap memory. */
+	service->username.~tstring();
+	service->password.~tstring();
+	service->env.~tbuffer();
+	service->dependencies.~tbuffer();
+	service->env_extra.~tbuffer();
+	service->initial_env.~tbuffer();
+	HeapFree(GetProcessHeap(), 0, service);
 }
 
 /* About to install the service */

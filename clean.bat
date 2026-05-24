@@ -20,9 +20,10 @@ del /q messages.rc 2>nul
 REM Generated version header
 del /q version.h   2>nul
 
-REM Unit test binary and object files
-if exist tests\test_nssm.exe  del /q tests\test_nssm.exe
-if exist tests\*.obj          del /q tests\*.obj
+REM Unit test binaries and object files
+if exist tests\test_nssm_x86.exe  del /q tests\test_nssm_x86.exe
+if exist tests\test_nssm_x64.exe  del /q tests\test_nssm_x64.exe
+if exist tests\*.obj              del /q tests\*.obj
 
 REM Integration test results
 if exist tests\integration\TestResults.xml  del /q tests\integration\TestResults.xml

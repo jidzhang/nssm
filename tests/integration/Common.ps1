@@ -10,22 +10,42 @@ $script:ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 function Get-NssmPath {
     <#
         .SYNOPSIS
-        Returns the path to nssm.exe.
+        Returns the path to nssm.exe for a given platform.
 
-        Searches in order: Release x64, Release Win32, Debug x64.
-        Throws if not found.
+        .PARAMETER Platform
+        "win32" or "win64". If omitted, reads $env:NSSM_TEST_PLATFORM.
+        If still unset, tries win32 first, then win64.
     #>
-    $candidates = @(
-        (Join-Path $script:ProjectRoot "out\Release\win64\nssm.exe")
-        (Join-Path $script:ProjectRoot "out\Release\win32\nssm.exe")
-        (Join-Path $script:ProjectRoot "out\Debug\win64\nssm.exe")
+    param(
+        [string]$Platform = $env:NSSM_TEST_PLATFORM
     )
+
+    if ($Platform -eq "win32") {
+        $candidates = @(
+            (Join-Path $script:ProjectRoot "out\Release\win32\nssm.exe")
+            (Join-Path $script:ProjectRoot "out\Debug\win32\nssm.exe")
+        )
+    } elseif ($Platform -eq "win64") {
+        $candidates = @(
+            (Join-Path $script:ProjectRoot "out\Release\win64\nssm64.exe")
+            (Join-Path $script:ProjectRoot "out\Release\win64\nssm.exe")
+            (Join-Path $script:ProjectRoot "out\Debug\win64\nssm.exe")
+        )
+    } else {
+        $candidates = @(
+            (Join-Path $script:ProjectRoot "out\Release\win32\nssm.exe")
+            (Join-Path $script:ProjectRoot "out\Debug\win32\nssm.exe")
+            (Join-Path $script:ProjectRoot "out\Release\win64\nssm64.exe")
+            (Join-Path $script:ProjectRoot "out\Release\win64\nssm.exe")
+            (Join-Path $script:ProjectRoot "out\Debug\win64\nssm.exe")
+        )
+    }
     foreach ($path in $candidates) {
         if (Test-Path -LiteralPath $path) {
             return (Resolve-Path $path).Path
         }
     }
-    throw "nssm.exe not found in any expected location. Build the project first."
+    throw "nssm.exe not found for platform '$Platform'. Build the project first."
 }
 
 function New-TestServiceName {

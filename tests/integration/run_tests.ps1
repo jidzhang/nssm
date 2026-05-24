@@ -54,12 +54,10 @@ $pesterVer = (Get-Module Pester).Version.ToString()
 Write-Host "[INFO] Pester v$pesterVer loaded" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
-# Build NSSM (unless skipped)
+# Build NSSM for BOTH platforms (unless skipped)
 # ---------------------------------------------------------------------------
 if (-not $SkipBuild) {
-    Write-Host "[INFO] Building NSSM (Release x64) ..." -ForegroundColor Cyan
-
-    # Try MSBuild
+    # Find MSBuild
     $msbuildPaths = @(
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\*\MSBuild\Current\Bin\MSBuild.exe"
         "${env:ProgramFiles}\Microsoft Visual Studio\2019\*\MSBuild\Current\Bin\MSBuild.exe"
@@ -77,7 +75,6 @@ if (-not $SkipBuild) {
     }
 
     if (-not $msbuild) {
-        # Try vswhere
         $vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         if (Test-Path $vswherePath) {
             $installPath = & $vswherePath -latest -property installationPath 2>$null
@@ -95,60 +92,63 @@ if (-not $SkipBuild) {
 
     Write-Host "[INFO] Using MSBuild: $msbuild"
 
-    # Try x64 first, fall back to Win32
-    $buildSuccess = $false
-    foreach ($platform in @("x64", "Win32")) {
-        $vcxproj = Join-Path $script:ProjectRoot "nssm.vcxproj"
-        if (-not (Test-Path $vcxproj)) {
-            # Try solution file
-            $sln = Get-ChildItem $script:ProjectRoot -Filter "nssm*.sln" | Select-Object -First 1
-            if ($sln) { $vcxproj = $sln.FullName }
-        }
-
-        Write-Host "[INFO] Building Release|$platform ..."
-        & $msbuild $vcxproj /p:Configuration=Release /p:Platform=$platform /v:minimal /nologo 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $buildSuccess = $true
-            Write-Host "[INFO] Build succeeded for $platform" -ForegroundColor Green
-            break
-        }
-        Write-Host "[WARN] Build failed for $platform, trying next..." -ForegroundColor Yellow
+    $vcxproj = Join-Path $script:ProjectRoot "nssm.vcxproj"
+    if (-not (Test-Path $vcxproj)) {
+        $sln = Get-ChildItem $script:ProjectRoot -Filter "nssm*.sln" | Select-Object -First 1
+        if ($sln) { $vcxproj = $sln.FullName }
     }
 
-    if (-not $buildSuccess) {
-        Write-Error "Build failed for all platforms. Check build output above."
-        exit 1
+    # Clean stale PDB and intermediate files, then build BOTH platforms
+    $outDir = Join-Path $script:ProjectRoot "out"
+    if (Test-Path $outDir) {
+        Write-Host "[INFO] Cleaning stale output files ..." -ForegroundColor Yellow
+        Get-ChildItem $outDir -Recurse -Include "*.pdb","*.obj","*.idb" -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    $tmpDir = Join-Path $script:ProjectRoot "tmp"
+    if (Test-Path $tmpDir) {
+        Get-ChildItem $tmpDir -Recurse -Include "*.pdb","*.obj","*.idb" -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+
+    foreach ($platform in @("x64", "Win32")) {
+        Write-Host "[INFO] Building Release|$platform ..." -ForegroundColor Cyan
+        & $msbuild $vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=$platform /v:minimal /nologo 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[INFO] Build succeeded for $platform" -ForegroundColor Green
+        } else {
+            Write-Error "Build failed for $platform. Check build output above."
+            exit 1
+        }
     }
 } else {
     Write-Host "[INFO] Skipping build ( -SkipBuild )" -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
-# Verify nssm.exe exists
+# Detect available platforms
 # ---------------------------------------------------------------------------
 . $script:CommonModule
-try {
-    $nssmPath = Get-NssmPath
-    Write-Host "[INFO] nssm.exe: $nssmPath" -ForegroundColor Green
 
-    # Print version
-    $ver = & $nssmPath version 2>&1
-    Write-Host "[INFO] NSSM version: $ver"
-} catch {
-    Write-Error $_.Exception.Message
+$testPlatforms = @()
+foreach ($plat in @("win32", "win64")) {
+    try {
+        $path = Get-NssmPath -Platform $plat
+        $testPlatforms += @{ Name = $plat; Path = $path }
+        Write-Host "[INFO] Found $plat : $path" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] $plat not found, skipping" -ForegroundColor Yellow
+    }
+}
+
+if ($testPlatforms.Count -eq 0) {
+    Write-Error "No nssm.exe found for any platform. Build the project first."
     exit 1
 }
 
 # ---------------------------------------------------------------------------
-# Run Pester tests
+# Test file paths
 # ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Running NSSM Integration Tests" -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
-
-# Test paths
 $testFiles = @(
     (Join-Path $script:TestDir "Lifecycle.Tests.ps1"),
     (Join-Path $script:TestDir "Parameters.Tests.ps1"),
@@ -177,67 +177,75 @@ foreach ($f in $testFiles) {
 }
 
 # ---------------------------------------------------------------------------
-# Run each test file in an isolated PowerShell process.
-# Pester v3's Invoke-Pester -Script @(...) runs all files in the same
-# runspace, causing Describe-context leakage and variable scope pollution
-# between files. Isolating per-file prevents this entirely.
+# Run tests for each platform
 # ---------------------------------------------------------------------------
-
 $totalPassed = 0
 $totalFailed = 0
 $totalCount = 0
 $totalSkipped = 0
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-foreach ($testFile in $testFiles) {
-    $fileName = [System.IO.Path]::GetFileName($testFile)
-    Write-Host "  Running: $fileName ..." -ForegroundColor Cyan
+foreach ($plat in $testPlatforms) {
+    $env:NSSM_TEST_PLATFORM = $plat.Name
 
-    # Build the wrapper script that will run inside a child PowerShell process.
-    # Uses -File instead of -Command to avoid all quoting/escaping nightmares.
-    # The wrapper writes a structured "PESTER_RESULT:..." line to stdout.
-    $wrapperPath = Join-Path $script:TestDir "_run_single_test.tmp.ps1"
-    $wrapperContent = @"
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "  Testing: $($plat.Name) ($($plat.Path))" -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+
+    # Print version
+    $ver = & $plat.Path version 2>&1
+    Write-Host "[INFO] NSSM version: $ver"
+
+    foreach ($testFile in $testFiles) {
+        $fileName = [System.IO.Path]::GetFileName($testFile)
+        Write-Host "  Running: $fileName ..." -ForegroundColor Cyan
+
+        # Build the wrapper script that will run inside a child PowerShell process.
+        $wrapperPath = Join-Path $script:TestDir "_run_single_test.tmp.ps1"
+        $wrapperContent = @"
+`$env:NSSM_TEST_PLATFORM = '$($plat.Name)'
 Import-Module Pester -ErrorAction Stop
 `$r = Invoke-Pester -Script '$($testFile.Replace("'", "''"))' -PassThru
 Write-Output "PESTER_RESULT:`$(`$r.PassedCount)|`$(`$r.FailedCount)|`$(`$r.TotalCount)|`$(`$r.SkippedCount)"
 "@
-    Set-Content -LiteralPath $wrapperPath -Value $wrapperContent -Encoding UTF8
+        Set-Content -LiteralPath $wrapperPath -Value $wrapperContent -Encoding UTF8
 
-    try {
-        $output = powershell -ExecutionPolicy Bypass -NoProfile -File $wrapperPath 2>&1
+        try {
+            $output = powershell -ExecutionPolicy Bypass -NoProfile -File $wrapperPath 2>&1
 
-        # Display the Pester output (everything except our structured result line)
-        $output | Where-Object { $_ -notmatch "^PESTER_RESULT:" } | ForEach-Object { Write-Host "  $_" }
+            # Display the Pester output (everything except our structured result line)
+            $output | Where-Object { $_ -notmatch "^PESTER_RESULT:" } | ForEach-Object { Write-Host "  $_" }
 
-        # Parse the structured result line from the child process
-        $resultLine = $output | Where-Object { $_ -match "^PESTER_RESULT:" } | Select-Object -Last 1
-        if ($resultLine -and $resultLine -match "^PESTER_RESULT:(\d+)\|(\d+)\|(\d+)\|(\d+)") {
-            $passed = [int]$Matches[1]
-            $failed = [int]$Matches[2]
-            $count = [int]$Matches[3]
-            $skipped = [int]$Matches[4]
+            # Parse the structured result line from the child process
+            $resultLine = $output | Where-Object { $_ -match "^PESTER_RESULT:" } | Select-Object -Last 1
+            if ($resultLine -and $resultLine -match "^PESTER_RESULT:(\d+)\|(\d+)\|(\d+)\|(\d+)") {
+                $passed = [int]$Matches[1]
+                $failed = [int]$Matches[2]
+                $count = [int]$Matches[3]
+                $skipped = [int]$Matches[4]
 
-            $totalPassed += $passed
-            $totalFailed += $failed
-            $totalCount += $count
-            $totalSkipped += $skipped
+                $totalPassed += $passed
+                $totalFailed += $failed
+                $totalCount += $count
+                $totalSkipped += $skipped
 
-            if ($failed -gt 0) {
-                Write-Host "  FAILED: $fileName ($failed failure(s))" -ForegroundColor Red
+                if ($failed -gt 0) {
+                    Write-Host "  FAILED: [$($plat.Name)] $fileName ($failed failure(s))" -ForegroundColor Red
+                } else {
+                    Write-Host "  PASSED: [$($plat.Name)] $fileName ($passed passed)" -ForegroundColor Green
+                }
             } else {
-                Write-Host "  PASSED: $fileName ($passed passed)" -ForegroundColor Green
+                Write-Host "  ERROR: Could not parse results from $fileName" -ForegroundColor Red
+                $totalFailed++
+                $totalCount++
             }
-        } else {
-            Write-Host "  ERROR: Could not parse results from $fileName" -ForegroundColor Red
-            $totalFailed++
-            $totalCount++
         }
+        finally {
+            Remove-Item $wrapperPath -ErrorAction SilentlyContinue
+        }
+        Write-Host ""
     }
-    finally {
-        Remove-Item $wrapperPath -ErrorAction SilentlyContinue
-    }
-    Write-Host ""
 }
 
 $stopwatch.Stop()
@@ -249,6 +257,7 @@ Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Test Results Summary" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  Platforms: $(($testPlatforms | ForEach-Object { $_.Name }) -join ', ')"
 Write-Host "  Total:    $totalCount"
 Write-Host "  Passed:   $totalPassed" -ForegroundColor Green
 Write-Host "  Failed:   $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })

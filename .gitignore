@@ -26,6 +26,9 @@ tests/*.obj
 # Test results
 tests/integration/TestResults.xml
 
+# Temporary test output files
+tests/integration/_child_*.tmp.txt
+
 # Temporary test wrapper
 _run_single_test.tmp.ps1
 
@@ -37,3 +40,7 @@ build_verify.bat
 
 # Logs
 *.log
+
+# Demo build artifacts
+demo/*.exe
+demo/*.obj

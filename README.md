@@ -1011,14 +1011,14 @@ run_all_tests.bat
 
 This will:
 
-1. Build the unit test executable (requires VS2019+ MSBuild on PATH
-   or in standard install locations).
-2. Run 60 unit tests covering utility functions, string operations,
+1. Build and run unit tests for **both x86 and x64** architectures
+   (requires VS2019+ with both toolsets installed).
+   60 tests covering utility functions, string operations,
    path handling, quoting, priority parsing and CPU affinity parsing.
-3. Build NSSM Release x64.
-4. Run 37 integration tests covering service lifecycle (install,
-   start, stop, restart, remove), parameter get/set/reset, crash
-   recovery and error handling.
+2. Build NSSM Release for **both Win32 and x64** platforms.
+3. Run integration tests against each platform's `nssm.exe`,
+   covering service lifecycle (install, start, stop, restart, remove),
+   parameter get/set/reset, crash recovery and error handling.
 
 Integration tests require Administrator privileges (SCM operations).
 
@@ -1070,6 +1070,7 @@ Project structure:
 | `catch.hpp` | catch2 unit test framework (single header) |
 | `tests/*.cpp` | Unit test source files |
 | `tests/integration/` | Pester integration test scripts |
+| `demo/` | Demo HTTP service for verifying NSSM functionality |
 
 ## Version History
 
