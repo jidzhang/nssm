@@ -128,7 +128,8 @@ static inline int await_service_control_response(unsigned long control, SC_HANDL
 		int response = service_control_response(control, service_status->dwCurrentState);
 		/* Alas we can't WaitForSingleObject() on an SC_HANDLE. */
 		if (!response) return response;
-		if (response > 0 || service_status->dwCurrentState == initial_status)
+		if (response < 0) return response;
+		if (service_status->dwCurrentState == initial_status)
 		{
 			if (service_status->dwCheckPoint != checkpoint || service_status->dwWaitHint != waithint) tries = 0;
 			checkpoint = service_status->dwCheckPoint;
@@ -1662,7 +1663,7 @@ int control_service(unsigned long control, int argc, TCHAR** argv, bool return_s
 
 		if (ret)
 		{
-			unsigned long cutoff = 0;
+			unsigned long cutoff = NSSM_RESET_THROTTLE_RESTART;
 
 			/* If we manage the service, respect the throttle time. */
 			RegistryKeyGuard key(open_registry(service_name, 0, KEY_READ, false));
