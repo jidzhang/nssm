@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: windows-2019
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,13 +29,14 @@ jobs:
       - name: Unit Tests (x64 + x86)
         shell: cmd
         run: |
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          for /f "delims=" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set "VS=%%i"
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" x64
           call tests\build_test.bat x64
           cd /d "%GITHUB_WORKSPACE%"
           tests\test_nssm_x64.exe --reporter compact
           if errorlevel 1 exit /b 1
           del /q tests\*.obj 2>nul
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" x86
           call tests\build_test.bat x86
           cd /d "%GITHUB_WORKSPACE%"
           tests\test_nssm_x86.exe --reporter compact
