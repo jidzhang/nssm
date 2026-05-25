@@ -432,8 +432,6 @@ int nssm_hook(hook_thread_t* hook_threads, nssm_service_t* service, TCHAR* hook_
 		{
 			log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_CREATETHREAD_FAILED, error_string(GetLastError()), 0);
 			await_hook(hook);
-			if (hook->name) HeapFree(GetProcessHeap(), 0, hook->name);
-			HeapFree(GetProcessHeap(), 0, hook);
 		}
 	}
 	else

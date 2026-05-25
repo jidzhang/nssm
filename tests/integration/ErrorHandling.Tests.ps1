@@ -67,6 +67,48 @@ Describe "Error Handling" {
         }
     }
 
+    Context "Remove running service" {
+        BeforeAll {
+            $script:RemoveTestService = New-TestServiceName
+            $appPath = Get-TestProcessPath
+            $appArgs = Get-TestLongRunArgs
+
+            # Install and start the service
+            $install = Invoke-NssmCommand -NssmPath $nssmPath -Arguments "install", $script:RemoveTestService, $appPath, $appArgs
+            $install.ExitCode | Should Be 0
+
+            $start = Invoke-NssmCommand -NssmPath $nssmPath -Arguments "start", $script:RemoveTestService
+            $start.ExitCode | Should Be 0
+            $reached = Wait-ServiceStatus -Name $script:RemoveTestService -Status "Running" -TimeoutSeconds 10
+            $reached | Should Be $true
+        }
+
+        AfterAll {
+            Uninstall-TestService -Name $script:RemoveTestService -NssmPath $nssmPath
+        }
+
+        It "Removes a running service without reboot" {
+            # Remove while running — should stop first, then delete
+            $remove = Invoke-NssmCommand -NssmPath $nssmPath -Arguments "remove", $script:RemoveTestService, "confirm"
+            $remove.ExitCode | Should Be 0
+
+            # Service should no longer exist
+            Test-ServiceExists -Name $script:RemoveTestService | Should Be $false
+        }
+
+        It "Can reinstall same service name after removal" {
+            $appPath = Get-TestProcessPath
+            $appArgs = Get-TestLongRunArgs
+
+            # Reinstall with the same name — should succeed (no reboot needed)
+            $reinstall = Invoke-NssmCommand -NssmPath $nssmPath -Arguments "install", $script:RemoveTestService, $appPath, $appArgs
+            $reinstall.ExitCode | Should Be 0
+
+            # Clean up
+            Uninstall-TestService -Name $script:RemoveTestService -NssmPath $nssmPath
+        }
+    }
+
     Context "Duplicate install" {
         BeforeAll {
             $script:TestService = New-TestServiceName

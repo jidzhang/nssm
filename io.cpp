@@ -826,9 +826,9 @@ unsigned long WINAPI log_and_rotate(void* arg)
 						{
 							if (!(complained & COMPLAINED_ROTATE)) log_event(EVENTLOG_ERROR_TYPE, NSSM_EVENT_ROTATE_FILE_FAILED, logger->service_name, logger->path, function, rotated, error_string(error), 0);
 							complained |= COMPLAINED_ROTATE;
-							/* We can at least try to re-open the existing file. */
-							logger->disposition = OPEN_ALWAYS;
 						}
+						/* Re-open with OPEN_ALWAYS regardless of error. */
+						logger->disposition = OPEN_ALWAYS;
 					}
 
 					/* Reopen. */
