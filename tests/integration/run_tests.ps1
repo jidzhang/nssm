@@ -49,7 +49,13 @@ Write-Host "[INFO] Test dir:     $script:TestDir"
 # ---------------------------------------------------------------------------
 # Load Pester (inbox on Windows 10, or whatever is available)
 # ---------------------------------------------------------------------------
-Import-Module Pester -ErrorAction Stop
+# Try Pester v3 first (inbox on Windows), fallback to whatever is available
+$pester3 = Get-Module -ListAvailable Pester | Where-Object { $_.Version -like "3.*" } | Select-Object -First 1
+if ($pester3) {
+    Import-Module Pester -RequiredVersion $pester3.Version -ErrorAction Stop
+} else {
+    Import-Module Pester -ErrorAction Stop
+}
 $pesterVer = (Get-Module Pester).Version.ToString()
 Write-Host "[INFO] Pester v$pesterVer loaded" -ForegroundColor Green
 
@@ -205,7 +211,8 @@ foreach ($plat in $testPlatforms) {
         $wrapperPath = Join-Path $script:TestDir "_run_single_test.tmp.ps1"
         $wrapperContent = @"
 `$env:NSSM_TEST_PLATFORM = '$($plat.Name)'
-Import-Module Pester -ErrorAction Stop
+`$p3 = Get-Module -ListAvailable Pester | Where-Object { `$_.Version -like '3.*' } | Select-Object -First 1
+if (`$p3) { Import-Module Pester -RequiredVersion `$p3.Version } else { Import-Module Pester }
 `$r = Invoke-Pester -Script '$($testFile.Replace("'", "''"))' -PassThru
 Write-Output "PESTER_RESULT:`$(`$r.PassedCount)|`$(`$r.FailedCount)|`$(`$r.TotalCount)|`$(`$r.SkippedCount)"
 "@
