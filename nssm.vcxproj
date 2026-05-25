@@ -293,6 +293,7 @@
     <ClCompile Include="imports.cpp" />
     <ClCompile Include="io.cpp" />
     <ClCompile Include="nssm.cpp" />
+    <ClCompile Include="nssm_util.cpp" />
     <ClCompile Include="process.cpp" />
     <ClCompile Include="registry.cpp" />
     <ClCompile Include="service.cpp" />
@@ -311,6 +312,7 @@
     <ClInclude Include="imports.h" />
     <ClInclude Include="io.h" />
     <ClInclude Include="nssm.h" />
+    <ClInclude Include="nssm_util.h" />
     <ClInclude Include="process.h" />
     <ClInclude Include="registry.h" />
     <ClInclude Include="service.h" />
