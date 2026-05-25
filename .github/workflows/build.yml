@@ -1,0 +1,55 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Release x64 and Win32
+        shell: powershell
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -requires Microsoft.Component.MSBuild `
+            -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          Write-Host "MSBuild: $msbuild"
+          & $msbuild nssm.vcxproj /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & $msbuild nssm.vcxproj /t:Build /p:Configuration=Release /p:Platform=Win32 /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Unit Tests (x64 + x86)
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          call tests\build_test.bat x64
+          cd /d "%GITHUB_WORKSPACE%"
+          tests\test_nssm_x64.exe --reporter compact
+          if errorlevel 1 exit /b 1
+          del /q tests\*.obj 2>nul
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          call tests\build_test.bat x86
+          cd /d "%GITHUB_WORKSPACE%"
+          tests\test_nssm_x86.exe --reporter compact
+
+      - name: Integration Tests
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File tests/integration/run_tests.ps1 -SkipBuild
+
+      - name: Upload nssm.exe
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nssm-release
+          path: |
+            out/Release/win32/nssm.exe
+            out/Release/win64/nssm.exe
