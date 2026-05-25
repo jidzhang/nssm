@@ -53,7 +53,8 @@ Single entry point `_tmain()` in `nssm.cpp` dispatches to two modes:
 
 | Module | Role |
 |--------|------|
-| `nssm.cpp/h` | Entry point, CLI dispatch, utility functions |
+| `nssm.cpp/h` | Entry point, CLI dispatch |
+| `nssm_util.cpp/h` | Pure utility functions (string ops, priority, affinity) shared with tests |
 | `service.cpp/h` | Service lifecycle, install/remove/edit, monitoring, throttling |
 | `gui.cpp/h` | Win32 tabbed property sheet (12 tabs) for service config |
 | `process.cpp/h` | Process tree walking, graceful shutdown methods |
@@ -69,3 +70,29 @@ Single entry point `_tmain()` in `nssm.cpp` dispatches to two modes:
 | `utf8.cpp/h` | UTF-8/UTF-16 conversion, console codepage setup |
 
 `nssm.h` is the master header that includes all others and defines shared constants (path lengths, throttle timers, stop methods, exit actions, priority classes).
+
+## RAII Guards
+
+| Guard | Header | Manages | Use for |
+|-------|--------|---------|---------|
+| `HandleGuard` | `guards.h` | `HANDLE` → `CloseHandle()` | Process/thread handles, file handles |
+| `ScHandleGuard` | `guards.h` | `SC_HANDLE` → `CloseServiceHandle()` | SCM and service handles |
+| `RegistryKeyGuard` | `guards.h` | `HKEY` → `RegCloseKey()` | Registry key handles |
+| `ScopedHeapBuffer` | `heap_ptr.h` | `HeapAlloc`/`HeapFree` | Temporary heap allocations |
+
+Prefer guards for local handles. Struct member handles (e.g. `service->process_handle`) are cleaned up in `cleanup_nssm_service()`.
+
+## Testing
+
+Run all tests: `run_all_tests.bat` (x64 unit + x86 unit + integration, 78 total).
+
+Unit tests (60 cases) use catch2 in `tests/*.cpp`. They link against `nssm_util.cpp` instead of the full NSSM codebase. Test code may use C++11.
+
+Integration tests (18 cases) use Pester 3.4 in `tests/integration/*.ps1`. They install/start/stop/remove real services and require Administrator privileges.
+
+## VS2008 Compatibility
+
+- No C++11 features in production code (no `auto`, range-for, lambdas, etc.)
+- No static local variables (VS2008 has issues with POD initialization in static locals)
+- Use `/MT` static CRT linking
+- `tbuffer` (typedef for `std::vector<TCHAR>`) is used instead of raw heap allocations for variable-length data

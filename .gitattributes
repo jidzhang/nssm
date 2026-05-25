@@ -1,2 +1,4 @@
 *.mc diff
 *.rc diff
+
+*.bat text eol=crlf

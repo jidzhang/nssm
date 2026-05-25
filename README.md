@@ -1,6 +1,6 @@
 # NSSM: The Native System Service Manager
 
-**Version 3.0, 2026-05-24** | **Public Domain**
+**Version 3.1, 2026-05-25** | **Public Domain**
 
 NSSM stands for **Native System Service Manager**.
 
@@ -864,6 +864,17 @@ To remove a service without confirmation from the GUI, run
 nssm remove <servicename> confirm
 ```
 
+The `delete` command is also accepted as an alias for `remove`:
+
+```cmd
+nssm delete <servicename> confirm
+```
+
+NSSM will stop the service before removing it. If the service is marked for
+deletion by the system, NSSM will retry for up to 10 seconds. In rare cases
+where the service remains locked, close any monitoring tools (service managers,
+event viewers) and try again.
+
 Try not to remove essential system services...
 
 ## Logging
@@ -876,6 +887,33 @@ Because of the way NSSM registers itself you should be aware that you may not
 be able to replace the NSSM binary if you have the event viewer open and that
 running multiple instances of NSSM from different locations may be confusing if
 they are not all the same version.
+
+## Troubleshooting
+
+### "Service marked for deletion"
+
+If `nssm remove` reports that the service is marked for deletion but not yet
+removed, this usually means another process holds an open handle to the service.
+Close any service management tools (`services.msc`, event viewer, process
+monitors) and try again. As a last resort, rebooting will clear the state.
+
+### Port conflicts
+
+If the managed application fails to start, check whether its port is already in
+use: `netstat -ano | findstr <port>`. The PID from the output will identify the
+conflicting process.
+
+### 32-bit vs 64-bit
+
+Use the 64-bit NSSM on 64-bit systems for full functionality. The 32-bit NSSM
+is limited to 32 CPU cores for affinity settings and may not correctly manage
+64-bit child processes.
+
+### Service won't start
+
+Check the event log (Applications and Services Logs → NSSM) for error details.
+Common causes: incorrect `AppDirectory`, missing executable, insufficient
+permissions for the service account.
 
 ## Listing Managed Services
 
@@ -1128,6 +1166,12 @@ Project structure:
   accepted as an alias for `remove`, matching `sc.exe` conventions. Several
   memory leaks and use-after-free bugs in the GUI install/edit flow have
   been fixed.
+- Since version 3.1, `nssm remove` stops the service before deleting and
+  retries on `ERROR_SERVICE_MARKED_FOR_DELETE`, eliminating the need to
+  reboot before reinstalling. A log rotation failure no longer terminates
+  the logging thread. A double-free in hook execution and a throttle data
+  race have been fixed. Pure utility functions are extracted to
+  `nssm_util.h/cpp` for testability and deduplication.
 
 ---
 

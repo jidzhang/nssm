@@ -44,3 +44,13 @@ build_verify.bat
 # Demo build artifacts
 demo/*.exe
 demo/*.obj
+
+# Temporary build/test scripts
+_demo_build.bat
+_test_compile.bat
+build_test.bat
+demo/_build.bat
+*.obj
+
+# Superpowers plugin docs
+docs/superpowers/
