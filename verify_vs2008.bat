@@ -15,10 +15,14 @@ rem ============================================================
 
 cd /d "%~dp0"
 
-set "DEVENV=C:\Program Files (x86)\Microsoft Visual Studio 9.0\Common7\IDE\devenv.com"
+if not defined VS90COMNTOOLS (
+    echo [ERROR] VS90COMNTOOLS not set. Is VS2008 installed?
+    exit /b 1
+)
+set "DEVENV=%VS90COMNTOOLS%\..\IDE\devenv.com"
 if not exist "%DEVENV%" echo [ERROR] devenv.com not found: "%DEVENV%" & exit /b 1
 
-set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio 9.0\VC\bin\vcvars32.bat"
+set "VCVARS=%VS90COMNTOOLS%\..\..\VC\bin\vcvars32.bat"
 if not exist "%VCVARS%" echo [ERROR] vcvars32.bat not found: "%VCVARS%" & exit /b 1
 
 echo ============================================

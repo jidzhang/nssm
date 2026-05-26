@@ -9,13 +9,21 @@ echo ============================================
 echo.
 
 REM -----------------------------------------------------------------------
-REM Find vcvarsall.bat
+REM Find vcvarsall.bat (vswhere first, then fallback to known paths)
 REM -----------------------------------------------------------------------
 set VCVARS=
-for %%E in (Enterprise Professional Community) do (
-    for %%Y in (2019 2022) do (
-        set "CHECK=%ProgramFiles(x86)%\Microsoft Visual Studio\%%Y\%%E\VC\Auxiliary\Build\vcvarsall.bat"
-        if exist "!CHECK!" set "VCVARS=!CHECK!"
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "delims=" %%i in ('"%VSWHERE%" -latest -property installationPath') do (
+        set "VCVARS=%%i\VC\Auxiliary\Build\vcvarsall.bat"
+    )
+)
+if not defined VCVARS (
+    for %%E in (Enterprise Professional Community) do (
+        for %%Y in (2019 2022) do (
+            set "CHECK=%ProgramFiles(x86)%\Microsoft Visual Studio\%%Y\%%E\VC\Auxiliary\Build\vcvarsall.bat"
+            if exist "!CHECK!" set "VCVARS=!CHECK!"
+        )
     )
 )
 if not defined VCVARS (
